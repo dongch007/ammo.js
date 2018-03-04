@@ -41,10 +41,13 @@ extern bool gDisableDeactivation;
 enum	btRigidBodyFlags
 {
 	BT_DISABLE_WORLD_GRAVITY = 1,
-	///The BT_ENABLE_GYROPSCOPIC_FORCE can easily introduce instability
-	///So generally it is best to not enable it. 
-	///If really needed, run at a high frequency like 1000 Hertz:	///See Demos/GyroscopicDemo for an example use
-	BT_ENABLE_GYROPSCOPIC_FORCE = 2
+	///BT_ENABLE_GYROPSCOPIC_FORCE flags is enabled by default in Bullet 2.83 and onwards.
+	///and it BT_ENABLE_GYROPSCOPIC_FORCE becomes equivalent to BT_ENABLE_GYROSCOPIC_FORCE_IMPLICIT_BODY
+	///See Demos/GyroscopicDemo and computeGyroscopicImpulseImplicit
+	BT_ENABLE_GYROSCOPIC_FORCE_EXPLICIT = 2,
+	BT_ENABLE_GYROSCOPIC_FORCE_IMPLICIT_WORLD=4,
+	BT_ENABLE_GYROSCOPIC_FORCE_IMPLICIT_BODY=8,
+	BT_ENABLE_GYROPSCOPIC_FORCE = BT_ENABLE_GYROSCOPIC_FORCE_IMPLICIT_BODY,
 };
 
 
@@ -87,7 +90,7 @@ class btRigidBody  : public btCollisionObject
 	//m_optionalMotionState allows to automatic synchronize the world transform for active objects
 	btMotionState*	m_optionalMotionState;
 
-	//keep track of typed constraints referencing this rigid body
+	//keep track of typed constraints referencing this rigid body, to disable collision between linked bodies
 	btAlignedObjectArray<btTypedConstraint*> m_constraintRefs;
 
 	int				m_rigidbodyFlags;
@@ -132,6 +135,8 @@ public:
 		///the m_rollingFriction prevents rounded shapes, such as spheres, cylinders and capsules from rolling forever.
 		///See Bullet/Demos/RollingFrictionDemo for usage
 		btScalar			m_rollingFriction;
+        btScalar			m_spinningFriction;//torsional friction around contact normal
+        
 		///best simulation results using zero restitution.
 		btScalar			m_restitution;
 
@@ -155,6 +160,7 @@ public:
 			m_angularDamping(btScalar(0.)),
 			m_friction(btScalar(0.5)),
 			m_rollingFriction(btScalar(0)),
+            m_spinningFriction(btScalar(0)),
 			m_restitution(btScalar(0.)),
 			m_linearSleepingThreshold(btScalar(0.8)),
 			m_angularSleepingThreshold(btScalar(1.f)),
@@ -278,12 +284,6 @@ public:
 		m_totalForce += force*m_linearFactor;
 	}
 
-	// XXX AMMO local addition to bullet
-	void	applyCentralLocalForce(const btVector3& force)
-	{
-		m_totalForce += m_worldTransform.getBasis() * force * m_linearFactor;
-	}
-
 	const btVector3& getTotalForce() const
 	{
 		return m_totalForce;
@@ -313,12 +313,6 @@ public:
 	void	applyTorque(const btVector3& torque)
 	{
 		m_totalTorque += torque*m_angularFactor;
-	}
-
-	// XXX AMMO local addition to bullet
-	void	applyLocalTorque(const btVector3& torque)
-	{
-		m_totalTorque += m_worldTransform.getBasis() * torque * m_angularFactor;
 	}
 	
 	void	applyForce(const btVector3& force, const btVector3& rel_pos) 
@@ -518,8 +512,6 @@ public:
 		return (getBroadphaseProxy() != 0);
 	}
 
-	virtual bool checkCollideWithOverride(const  btCollisionObject* co) const;
-
 	void addConstraintRef(btTypedConstraint* c);
 	void removeConstraintRef(btTypedConstraint* c);
 
@@ -543,7 +535,18 @@ public:
 		return m_rigidbodyFlags;
 	}
 
-	btVector3 computeGyroscopicForce(btScalar maxGyroscopicForce) const;
+
+	
+
+	///perform implicit force computation in world space
+	btVector3 computeGyroscopicImpulseImplicit_World(btScalar dt) const;
+	
+	///perform implicit force computation in body space (inertial frame)
+	btVector3 computeGyroscopicImpulseImplicit_Body(btScalar step) const;
+
+	///explicit version is best avoided, it gains energy
+	btVector3 computeGyroscopicForceExplicit(btScalar maxGyroscopicForce) const;
+	btVector3 getLocalInertia() const;
 
 	///////////////////////////////////////////////
 
