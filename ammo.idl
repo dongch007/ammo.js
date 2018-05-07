@@ -73,9 +73,9 @@ btDefaultMotionState implements btMotionState;
 interface btCollisionObject {
   btCollisionShape getCollisionShape();
   void setContactProcessingThreshold(float contactProcessingThreshold);
-  //void setActivationState(long newState);  
+  void setActivationState(long newState);  
   //void forceActivationState(long newState);
-  //void activate(optional boolean forceActivation);
+  void activate(optional boolean forceActivation);
   boolean isActive();
   boolean isKinematicObject();
   void setRestitution(float rest);
@@ -85,6 +85,8 @@ interface btCollisionObject {
   void setCollisionFlags(long flags);
   void setWorldTransform ([Const,Ref] btTransform worldTrans);
   void setCollisionShape (btCollisionShape collisionShape);
+  [Const]VoidPtr getUserPointer();
+  void setUserPointer(VoidPtr userPointer);
 };
 
 [NoDelete]
@@ -193,15 +195,15 @@ interface btCapsuleShape {
 };
 btCapsuleShape implements btCollisionShape;
 
-//interface btCapsuleShapeX {
-//  void btCapsuleShapeX(float radius, float height);
-//};
-//btCapsuleShapeX implements btCapsuleShape;
+interface btCapsuleShapeX {
+  void btCapsuleShapeX(float radius, float height);
+};
+btCapsuleShapeX implements btCapsuleShape;
 
-//interface btCapsuleShapeZ {
-//  void btCapsuleShapeZ(float radius, float height);
-//};
-//btCapsuleShapeZ implements btCapsuleShape;
+interface btCapsuleShapeZ {
+  void btCapsuleShapeZ(float radius, float height);
+};
+btCapsuleShapeZ implements btCapsuleShape;
 
 interface btSphereShape {
   void btSphereShape(float radius);
@@ -321,12 +323,12 @@ interface btRigidBody {
   void setDamping(float lin_damping, float ang_damping);
   void setMassProps(float mass, [Const, Ref] btVector3 inertia);
   //void applyTorque([Const, Ref] btVector3 torque);
-  //void applyForce([Const, Ref] btVector3 force, [Const, Ref] btVector3 rel_pos);
-  void applyCentralForce([Const, Ref] btVector3 force);
-  void applyTorqueImpulse([Const, Ref] btVector3 torque);
-  void applyImpulse([Const, Ref] btVector3 impulse, [Const, Ref] btVector3 rel_pos);
-  void applyCentralImpulse([Const, Ref] btVector3 impulse);
-  void updateInertiaTensor();
+  void applyForce([Const, Ref] btVector3 force, [Const, Ref] btVector3 rel_pos);
+  //void applyCentralForce([Const, Ref] btVector3 force);
+  //void applyTorqueImpulse([Const, Ref] btVector3 torque);
+  //void applyImpulse([Const, Ref] btVector3 impulse, [Const, Ref] btVector3 rel_pos);
+  //void applyCentralImpulse([Const, Ref] btVector3 impulse);
+  //void updateInertiaTensor();
   [Const, Ref] btVector3 getLinearVelocity();
   [Const, Ref] btVector3 getAngularVelocity();
   void setLinearVelocity([Const, Ref] btVector3 lin_vel);
@@ -365,6 +367,7 @@ interface btCollisionWorld {
   btOverlappingPairCache getPairCache(); 
   [Ref] btDispatcherInfo getDispatchInfo();
   void addCollisionObject(btCollisionObject collisionObject, optional short collisionFilterGroup, optional short collisionFilterMask);
+  void removeCollisionObject(btCollisionObject collisionObject);
   [Const] btBroadphaseInterface getBroadphase ();
   void convexSweepTest([Const] btConvexShape castShape, [Const, Ref] btTransform from, [Const, Ref] btTransform to, [Ref] ConvexResultCallback resultCallback, float allowedCcdPenetration); 
   void contactPairTest([Const] btCollisionObject colObjA, [Const] btCollisionObject colObjB, [Ref] ContactResultCallback resultCallback);  
@@ -372,6 +375,7 @@ interface btCollisionWorld {
 
 interface btDynamicsWorld {
   void addAction(btActionInterface action);
+  void removeAction(btActionInterface action);
 };
 btDynamicsWorld implements btCollisionWorld;
 
@@ -395,23 +399,24 @@ interface btActionInterface {
 
 interface btKinematicCharacterController {
   void btKinematicCharacterController(btPairCachingGhostObject ghostObject, btConvexShape convexShape, float stepHeight, [Const, Ref] optional btVector3 upAxis);
-
-  //void setUpAxis (long axis);
+  //void setUp([Const, Ref]btVector3 up);
   void setWalkDirection ([Const,Ref] btVector3 walkDirection);
   void setVelocityForTimeInterval ([Const,Ref] btVector3 velocity, float timeInterval);
-  //void reset ();
+  //void reset (btCollisionWorld collisionWorld);
   void warp ([Const, Ref]btVector3 origin);
   void preStep (btCollisionWorld collisionWorld);
   void playerStep (btCollisionWorld collisionWorld, float dt);
   void setFallSpeed (float fallSpeed);
   void setJumpSpeed (float jumpSpeed);
-  void setMaxJumpHeight (float maxJumpHeight);
-  boolean canJump ();
+  //void setMaxJumpHeight (float maxJumpHeight);
+  //boolean canJump ();
   void jump ([Const, Ref] optional btVector3 v);
   void setGravity ([Const, Ref]btVector3 gravity);
-  [Value]btVector3 getGravity ();
+  //[Value]btVector3 getGravity ();
   void setMaxSlope (float slopeRadians);
-  float getMaxSlope ();
+  //float getMaxSlope ();
+  void setStepHeight (float h);
+  //float getStepHeight ();
   btPairCachingGhostObject getGhostObject ();
   void setUseGhostSweepTest (boolean useGhostObjectSweepTest);
   boolean onGround ();
@@ -422,6 +427,7 @@ interface btGhostObject {
   void btGhostObject();
   long getNumOverlappingObjects();
   btCollisionObject getOverlappingObject(long index);
+  //[Const]btGhostObject upcast([Const] btCollisionObject colObj);
 };
 btGhostObject implements btCollisionObject;
 

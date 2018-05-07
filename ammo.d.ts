@@ -2,6 +2,18 @@ declare module Ammo {
 
     export function destroy(object: any): void;
 
+    //Given a raw pointer (an integer), returns a wrapped object.
+    export function wrapPointer(ptr: number, Class: any): void;
+
+    //Returns a raw pointer.
+    export function getPointer(object: any): number;
+
+    //Returns a wrapping of the same pointer but to another class.
+    export function castObject(object: any, Class: any): void;
+
+    //Compares two objects’ pointers.
+    export function compare(object1: any, object2: any): void;
+
     export class btVector3 {
         constructor(x: number, y: number, z: number);
         x(): number;
@@ -46,38 +58,16 @@ declare module Ammo {
     }
 
     export class btDefaultMotionState extends btMotionState {
-        constructor(t: btTransform);
+        constructor(startTrans?: btTransform, centerOfMassOffset?: btTransform);
     }
-
-    export enum CollisionFlags
-	{
-		CF_STATIC_OBJECT= 1,
-		CF_KINEMATIC_OBJECT= 2,
-		CF_NO_CONTACT_RESPONSE = 4,
-		CF_CUSTOM_MATERIAL_CALLBACK = 8,//this allows per-triangle material (friction/restitution)
-		CF_CHARACTER_OBJECT = 16,
-		CF_DISABLE_VISUALIZE_OBJECT = 32, //disable debug drawing
-		CF_DISABLE_SPU_COLLISION_PROCESSING = 64//disable parallel/SPU processing
-	}
-
-    export enum CollisionFilterGroups
-	{
-        DefaultFilter = 1,
-        StaticFilter = 2,
-        KinematicFilter = 4,
-        DebrisFilter = 8,
-        SensorTrigger = 16,
-        CharacterFilter = 32,
-        AllFilter = -1 //all bits sets: DefaultFilter | StaticFilter | KinematicFilter | DebrisFilter | SensorTrigger
-	}
 
     export class btCollisionObject {
         getCollisionShape(): btCollisionShape;
         setCollisionShape(collisionShape: btCollisionShape);
         setContactProcessingThreshold(contactProcessingThreshold: number): void;
-        //setActivationState(newState: number): void;
+        setActivationState(newState: number): void;
         //forceActivationState(newState: number): void;
-        //activate(forceActivation: boolean): void;
+        activate(forceActivation: boolean): void;
         isActive(): boolean;
         isKinematicObject(): boolean;
         setRestitution(rest: number): void;
@@ -86,6 +76,8 @@ declare module Ammo {
         setCollisionFlags(flags: number): void;
         getWorldTransform(): btTransform;
         setWorldTransform(worldTrans: btTransform): void;
+        getUserPointer(): any;
+        setUserPointer(userPointer: AmmoCollider): void;
     }
 
     export class btCollisionObjectWrapper {
@@ -94,16 +86,29 @@ declare module Ammo {
 
     export class RayResultCallback {
         hasHit(): boolean;
-        m_collisionFilterGroup: number;
-        m_collisionFilterMask: number;
-        m_collisionObject: btCollisionObject;
+
+        //m_collisionFilterGroup: number;
+        get_m_collisionFilterGroup(): number;
+        set_m_collisionFilterGroup(group: number): void;
+
+        //m_collisionFilterMask: number;
+        get_m_collisionFilterMask(): number;
+        set_m_collisionFilterMask(mask: number): void;
+
+        //m_collisionObject: btCollisionObject;
+        get_m_collisionObject(): btCollisionObject;
     }
 
     export class ClosestRayResultCallback extends RayResultCallback {
-        ClosestRayResultCallback(from: btVector3, to: btVector3): void;
-        m_rayFromWorld: btVector3;
-        m_hitNormalWorld: btVector3;
-        m_hitPointWorld: btVector3;
+        constructor(from: btVector3, to: btVector3);
+        //m_rayFromWorld: btVector3;
+        //m_rayToWorld: btVector3;
+
+        //m_hitNormalWorld: btVector3;
+        get_m_hitNormalWorld(): btVector3;
+
+        //m_hitPointWorld: btVector3;
+        get_m_hitPointWorld(): btVector3;
     }
 
     export class btManifoldPoint {
@@ -130,16 +135,42 @@ declare module Ammo {
 
     }
 
-    export class btBoxShape extends btCollisionShape {
+    export class btBoxShape extends btConvexShape {
         constructor(boxHalfExtents: btVector3);
     }
 
-    export class btSphereShape extends btCollisionShape {
+    export class btSphereShape extends btConvexShape {
         constructor(radius: number);
     }
 
     export class btCapsuleShape extends btConvexShape {
         constructor(radius: number, height: number);
+    }
+
+    export class btCapsuleShapeX extends btCapsuleShape {
+        constructor(radius: number, height: number);
+    }
+
+    export class btCapsuleShapeZ extends btCapsuleShape {
+        constructor(radius: number, height: number);
+    }
+
+    export class btConcaveShape extends btCollisionShape {
+    }
+
+    export class btStridingMeshInterface{
+    }
+
+    export class btTriangleMesh extends btStridingMeshInterface{
+        constructor(use32bitIndices?: boolean, use4componentVertices?: boolean);
+        addTriangle(vertex0: btVector3, vertex1: btVector3, vertex2: btVector3, removeDuplicateVertices?: boolean): void;
+    }
+
+    export class btTriangleMeshShape extends btConcaveShape {   
+    }
+
+    export class btBvhTriangleMeshShape extends btTriangleMeshShape {
+        constructor(meshInterface: btStridingMeshInterface, useQuantizedAabbCompression: boolean, buildBvh?: boolean);
     }
 
     export class btSequentialImpulseConstraintSolver { }
@@ -211,8 +242,8 @@ declare module Ammo {
         // setDamping(lin_damping: number, ang_damping: number): void;
         // setMassProps(mass: number, inertia: btVector3): btTransform;
         // applyTorque(torque: btVector3): void;
-        // applyForce(force: btVector3, rel_pos: btVector3): void;
-        applyCentralForce(force: btVector3): void;
+        applyForce(force: btVector3, rel_pos: btVector3): void;
+        //applyCentralForce(force: btVector3): void;
         // applyTorqueImpulse(torque: btVector3): void;
         // applyImpulse(impulse: btVector3, rel_pos: btVector3): void;
         // applyCentralImpulse(impulse: btVector3): void;
@@ -224,7 +255,7 @@ declare module Ammo {
         // setLinearFactor(linearFactor: btVector3): void;
         // setAngularFactor(angularFactor: btVector3): void;
         getMotionState(): btMotionState;
-        // upcast(colObj: btCollisionObject): btRigidBody;
+        //upcast(colObj: btCollisionObject): btRigidBody;
     }
 
 
@@ -252,7 +283,8 @@ declare module Ammo {
         rayTest(rayFromWorld: btVector3, rayToWorld: btVector3, resultCallback: RayResultCallback): void;
         // getPairCache(): btOverlappingPairCache;
         // getDispatchInfo(): btDispatcherInfo;
-        addCollisionObject(collisionObject: btCollisionObject, collisionFilterGroup: number, collisionFilterMask: number): void;
+        addCollisionObject(collisionObject: btCollisionObject, collisionFilterGroup?: number, collisionFilterMask?: number): void;
+        removeCollisionObject(collisionObject: btCollisionObject): void;
         // getBroadphase(): btBroadphaseInterface;
         // convexSweepTest(castShape: btConvexShape, from: btTransform, to: btTransform, resultCallback: ConvexResultCallback, allowedCcdPenetration: number): void;
         // contactPairTest(colObjA: btCollisionObject, colObjB: btCollisionObject, resultCallback: ContactResultCallback): void;
@@ -260,6 +292,7 @@ declare module Ammo {
 
     export class btDynamicsWorld extends btCollisionWorld {
         addAction(action: btActionInterface): void;
+        removeAction(action: btActionInterface): void;
     }
 
     export class btDiscreteDynamicsWorld extends btDynamicsWorld{
@@ -269,7 +302,7 @@ declare module Ammo {
         addRigidBody(body: btRigidBody): void;
         addRigidBody(body: btRigidBody, group: number, mask: number): void;
         removeRigidBody(body: btRigidBody): void;
-        stepSimulation(timeStep: number, maxSubSteps: number);
+        stepSimulation(timeStep: number, maxSubSteps?: number, fixedTimeStep?: number);
     }
 
     export class btActionInterface {
@@ -277,22 +310,25 @@ declare module Ammo {
     }
 
     export class btKinematicCharacterController {
-        constructor(ghostObject: btPairCachingGhostObject, convexShape: btConvexShape, stepHeight: number, up: btVector3);
-        setUpAxis (axis: number): void;
+        constructor(ghostObject: btPairCachingGhostObject, convexShape: btConvexShape, stepHeight: number, up?: btVector3);
+        //setUp(up: btVector3);
         setWalkDirection (walkDirection: btVector3): void;
         setVelocityForTimeInterval (velocity: btVector3, timeInterval: number): void;
         warp (origin: btVector3): void;
-        preStep (collisionWorld: btCollisionWorld): void;
-        playerStep (collisionWorld: btCollisionWorld, dt: number): void;
+        //reset(collisionWorld: btCollisionWorld): void;
+        //preStep (collisionWorld: btCollisionWorld): void;
+        //playerStep (collisionWorld: btCollisionWorld, dt: number): void;
         setFallSpeed (fallSpeed: number): void;
         setJumpSpeed (jumpSpeed:number): void;
-        setMaxJumpHeight (maxJumpHeight: number): void;
-        canJump (): boolean;
-        jump (): void;
+        //setMaxJumpHeight (maxJumpHeight: number): void;
+        //canJump (): boolean;  //canJump内部直接return的onGround
+        jump (v?: btVector3): void;
         setGravity (gravity: btVector3): void;
-        getGravity (): btVector3;
+        //getGravity (): btVector3;
         setMaxSlope (slopeRadians: number): void;
-        getMaxSlope (): number;
+        //getMaxSlope (): number;
+        setStepHeight (h: number): void;
+        //getStepHeight (): number;
         getGhostObject (): btPairCachingGhostObject;
         setUseGhostSweepTest (useGhostObjectSweepTest: boolean): void;
         onGround (): boolean;
@@ -301,6 +337,7 @@ declare module Ammo {
     export class btGhostObject extends btCollisionObject {
         getNumOverlappingObjects(): number;
         getOverlappingObject(index: number): btCollisionObject;
+        //upcast(colObj: btCollisionObject): btGhostObject;
     }
     
     export class btPairCachingGhostObject extends btGhostObject {
