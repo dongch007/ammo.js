@@ -59,14 +59,42 @@ if not _OPTIONS["no-enet"] then
 		defines {"BT_ENABLE_ENET"}
 	end
 
+	if not _OPTIONS["no-clsocket"] then
+
+                includedirs {"../../examples/ThirdPartyLibs/clsocket/src"}
+
+		 if os.is("Windows") then
+                	defines { "WIN32" }
+                	links {"Ws2_32","Winmm"}
+       		 end
+        	if os.is("Linux") then
+                	defines {"_LINUX"}
+        	end
+        	if os.is("MacOSX") then
+                	defines {"_DARWIN"}
+        	end
+
+                links {"clsocket"}
+
+                files {
+                        "../../examples/SharedMemory/PhysicsClientTCP.cpp",
+                        "../../examples/SharedMemory/PhysicsClientTCP.h",
+                        "../../examples/SharedMemory/PhysicsClientTCP_C_API.cpp",
+                        "../../examples/SharedMemory/PhysicsClientTCP_C_API.h",
+                }
+                defines {"BT_ENABLE_CLSOCKET"}
+        end
+
 
 		files {
 			"pybullet.c",
 			"../../examples/SharedMemory/IKTrajectoryHelper.cpp",
 			"../../examples/SharedMemory/IKTrajectoryHelper.h",
 			"../../examples/ExampleBrowser/InProcessExampleBrowser.cpp",
-			"../../examples/SharedMemory/TinyRendererVisualShapeConverter.cpp",
-			"../../examples/SharedMemory/TinyRendererVisualShapeConverter.h",
+			"../../examples/SharedMemory/plugins/tinyRendererPlugin/tinyRendererPlugin.cpp",
+			"../../examples/SharedMemory/plugins/tinyRendererPlugin/tinyRendererPlugin.h",
+			"../../examples/SharedMemory/plugins/tinyRendererPlugin/TinyRendererVisualShapeConverter.cpp",
+			"../../examples/SharedMemory/plugins/tinyRendererPlugin/TinyRendererVisualShapeConverter.h",
 			"../../examples/OpenGLWindow/SimpleCamera.cpp",
 			"../../examples/OpenGLWindow/SimpleCamera.h",
 			"../../examples/TinyRenderer/geometry.cpp",
@@ -75,11 +103,14 @@ if not _OPTIONS["no-enet"] then
 			"../../examples/TinyRenderer/our_gl.cpp",
 			"../../examples/TinyRenderer/TinyRenderer.cpp",
 			"../../examples/SharedMemory/InProcessMemory.cpp",
+			"../../examples/SharedMemory/b3RobotSimulatorClientAPI_NoDirect.cpp",
+			"../../examples/SharedMemory/b3RobotSimulatorClientAPI_NoDirect.h",
 			"../../examples/SharedMemory/PhysicsClient.cpp",
 			"../../examples/SharedMemory/PhysicsClient.h",
 			"../../examples/SharedMemory/PhysicsServer.cpp",
 			"../../examples/SharedMemory/PhysicsServer.h",
 			"../../examples/SharedMemory/PhysicsServerExample.cpp",
+			"../../examples/SharedMemory/PhysicsServerExampleBullet2.cpp",
 			"../../examples/SharedMemory/SharedMemoryInProcessPhysicsC_API.cpp",
 			"../../examples/SharedMemory/PhysicsServerSharedMemory.cpp",
 			"../../examples/SharedMemory/PhysicsServerSharedMemory.h",
@@ -89,6 +120,8 @@ if not _OPTIONS["no-enet"] then
 			"../../examples/SharedMemory/PhysicsDirectC_API.h",
 			"../../examples/SharedMemory/PhysicsServerCommandProcessor.cpp",
 			"../../examples/SharedMemory/PhysicsServerCommandProcessor.h",
+			"../../examples/SharedMemory/b3PluginManager.cpp",
+			"../../examples/SharedMemory/b3PluginManager.h",
 			"../../examples/SharedMemory/PhysicsClientSharedMemory.cpp",
 			"../../examples/SharedMemory/PhysicsClientSharedMemory.h",
 			"../../examples/SharedMemory/PhysicsClientSharedMemory_C_API.cpp",
@@ -99,12 +132,13 @@ if not _OPTIONS["no-enet"] then
 			"../../examples/SharedMemory/Win32SharedMemory.h",
 			"../../examples/SharedMemory/PosixSharedMemory.cpp",
 			"../../examples/SharedMemory/PosixSharedMemory.h",
+			"../../examples/SharedMemory/SharedMemoryCommands.h",
+			"../../examples/SharedMemory/SharedMemoryPublic.h",
 			"../../examples/Utils/b3ResourcePath.cpp",
 			"../../examples/Utils/b3ResourcePath.h",
-			"../../examples/ThirdPartyLibs/tinyxml/tinystr.cpp",
-			"../../examples/ThirdPartyLibs/tinyxml/tinyxml.cpp",
-			"../../examples/ThirdPartyLibs/tinyxml/tinyxmlerror.cpp",
-			"../../examples/ThirdPartyLibs/tinyxml/tinyxmlparser.cpp",
+			"../../examples/Utils/RobotLoggingUtil.cpp",
+			"../../examples/Utils/RobotLoggingUtil.h",
+			"../../examples/ThirdPartyLibs/tinyxml2/tinyxml2.cpp",
 			"../../examples/ThirdPartyLibs/Wavefront/tiny_obj_loader.cpp",
 			"../../examples/ThirdPartyLibs/Wavefront/tiny_obj_loader.h",
 			"../../examples/ThirdPartyLibs/stb_image/stb_image.cpp",
@@ -121,7 +155,14 @@ if not _OPTIONS["no-enet"] then
 			"../../examples/MultiThreading/b3PosixThreadSupport.cpp",
 			"../../examples/MultiThreading/b3Win32ThreadSupport.cpp",
 			"../../examples/MultiThreading/b3ThreadSupportInterface.cpp",
+			"../../examples/SharedMemory/plugins/pdControlPlugin/pdControlPlugin.cpp",
+			"../../examples/SharedMemory/plugins/pdControlPlugin/pdControlPlugin.h",
 			}
+			
+if (_OPTIONS["enable_static_vr_plugin"]) then
+		files {"../../examples/SharedMemory/plugins/vrSyncPlugin/vrSyncPlugin.cpp"}
+end
+
 	
 	includedirs {
 		_OPTIONS["python_include_dir"],

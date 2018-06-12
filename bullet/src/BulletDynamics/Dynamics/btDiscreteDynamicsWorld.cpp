@@ -374,7 +374,7 @@ void	btDiscreteDynamicsWorld::synchronizeSingleMotionState(btRigidBody* body)
 
 void	btDiscreteDynamicsWorld::synchronizeMotionStates()
 {
-	BT_PROFILE("synchronizeMotionStates");
+//	BT_PROFILE("synchronizeMotionStates");
 	if (m_synchronizeAllMotionStates)
 	{
 		//iterate  over all collision objects
@@ -402,7 +402,6 @@ int	btDiscreteDynamicsWorld::stepSimulation( btScalar timeStep,int maxSubSteps, 
 {
 	startProfiling(timeStep);
 
-	BT_PROFILE("stepSimulation");
 
 	int numSimulationSubSteps = 0;
 
@@ -843,6 +842,9 @@ public:
 
 		btCollisionObject* otherObj = (btCollisionObject*) proxy0->m_clientObject;
 
+		if(!m_dispatcher->needsCollision(m_me, otherObj))
+			return false;
+
 		//call needsResponse, see http://code.google.com/p/bullet/issues/detail?id=179
 		if (m_dispatcher->needsResponse(m_me,otherObj))
 		{
@@ -953,7 +955,7 @@ void btDiscreteDynamicsWorld::createPredictiveContactsInternal( btRigidBody** bo
 						int index = manifold->addManifoldPoint(newPoint, isPredictive);
 						btManifoldPoint& pt = manifold->getContactPoint(index);
 						pt.m_combinedRestitution = 0;
-						pt.m_combinedFriction = btManifoldResult::calculateCombinedFriction(body,sweepResults.m_hitCollisionObject);
+						pt.m_combinedFriction = gCalculateCombinedFrictionCallback(body,sweepResults.m_hitCollisionObject);
 						pt.m_positionWorldOnA = body->getWorldTransform().getOrigin();
 						pt.m_positionWorldOnB = worldPointB;
 
@@ -1114,7 +1116,7 @@ void btDiscreteDynamicsWorld::integrateTransforms(btScalar timeStep)
 			for (int p=0;p<manifold->getNumContacts();p++)
 			{
 				const btManifoldPoint& pt = manifold->getContactPoint(p);
-				btScalar combinedRestitution = btManifoldResult::calculateCombinedRestitution(body0, body1);
+				btScalar combinedRestitution = gCalculateCombinedRestitutionCallback(body0, body1);
 
 				if (combinedRestitution>0 && pt.m_appliedImpulse != 0.f)
 				//if (pt.getDistance()>0 && combinedRestitution>0 && pt.m_appliedImpulse != 0.f)
@@ -1343,9 +1345,12 @@ void btDiscreteDynamicsWorld::debugDrawConstraint(btTypedConstraint* constraint)
 					btVector3 axis = tr.getBasis().getColumn(0);
 					btScalar minTh = p6DOF->getRotationalLimitMotor(1)->m_loLimit;
 					btScalar maxTh = p6DOF->getRotationalLimitMotor(1)->m_hiLimit;
-					btScalar minPs = p6DOF->getRotationalLimitMotor(2)->m_loLimit;
-					btScalar maxPs = p6DOF->getRotationalLimitMotor(2)->m_hiLimit;
-					getDebugDrawer()->drawSpherePatch(center, up, axis, dbgDrawSize * btScalar(.9f), minTh, maxTh, minPs, maxPs, btVector3(0, 0, 0));
+					if (minTh <= maxTh)
+					{
+						btScalar minPs = p6DOF->getRotationalLimitMotor(2)->m_loLimit;
+						btScalar maxPs = p6DOF->getRotationalLimitMotor(2)->m_hiLimit;
+						getDebugDrawer()->drawSpherePatch(center, up, axis, dbgDrawSize * btScalar(.9f), minTh, maxTh, minPs, maxPs, btVector3(0, 0, 0));
+					}
 					axis = tr.getBasis().getColumn(1);
 					btScalar ay = p6DOF->getAngle(1);
 					btScalar az = p6DOF->getAngle(2);
@@ -1512,6 +1517,9 @@ void	btDiscreteDynamicsWorld::serializeDynamicsWorldInfo(btSerializer* serialize
 
 		worldInfo->m_solverInfo.m_splitImpulse = getSolverInfo().m_splitImpulse;
 
+		// Fill padding with zeros to appease msan.
+		memset(worldInfo->m_solverInfo.m_padding, 0, sizeof(worldInfo->m_solverInfo.m_padding));
+
 #ifdef BT_USE_DOUBLE_PRECISION
 		const char* structType = "btDynamicsWorldDoubleData";
 #else//BT_USE_DOUBLE_PRECISION
@@ -1530,6 +1538,8 @@ void	btDiscreteDynamicsWorld::serialize(btSerializer* serializer)
 	serializeCollisionObjects(serializer);
 
 	serializeRigidBodies(serializer);
+
+	serializeContactManifolds(serializer);
 
 	serializer->finishSerialization();
 }

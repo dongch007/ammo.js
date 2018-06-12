@@ -2,7 +2,7 @@
 #define BULLET_MJCF_IMPORTER_H
 
 #include "../ImportURDFDemo/URDFImporterInterface.h"
-#include "../ImportURDFDemo/LinkVisualShapesConverter.h"
+#include "../ImportURDFDemo/UrdfRenderingInterface.h"
 
 
 struct MJCFErrorLogger
@@ -12,15 +12,22 @@ struct MJCFErrorLogger
 	virtual void printMessage(const char* msg)=0;
 };
 
-
+struct MJCFURDFTexture
+{
+	int m_width;
+	int m_height;
+	unsigned char* textureData1;
+	bool m_isCached;
+};
 
 class BulletMJCFImporter : public URDFImporterInterface
 {
 	struct BulletMJCFImporterInternalData* m_data;
 
+	void convertURDFToVisualShapeInternal(const struct UrdfVisual* visual, const char* urdfPathPrefix, const btTransform& visualTransform, btAlignedObjectArray<struct GLInstanceVertex>& verticesOut, btAlignedObjectArray<int>& indicesOut, btAlignedObjectArray<MJCFURDFTexture>& texturesOut) const;
 
 public:
-	BulletMJCFImporter(struct GUIHelperInterface* helper);
+	BulletMJCFImporter(struct GUIHelperInterface* helper, UrdfRenderingInterface* customConverter, int flags);
 	virtual ~BulletMJCFImporter();
 	
 	virtual bool parseMJCFString(const char* xmlString, MJCFErrorLogger* logger);
@@ -42,9 +49,12 @@ public:
     
     ///pure virtual interfaces, precondition is a valid linkIndex (you can assert/terminate if the linkIndex is out of range)
     virtual std::string getLinkName(int linkIndex) const;
+    
+	virtual std::string getBodyName() const;
 
 	/// optional method to provide the link color. return true if the color is available and copied into colorRGBA, return false otherwise
 	virtual bool getLinkColor(int linkIndex, btVector4& colorRGBA) const;
+	bool getLinkColor2(int linkIndex, struct UrdfMaterialColor& matCol) const;
 
 	//optional method to get collision group (type) and mask (affinity)
 	virtual int getCollisionGroupAndMask(int linkIndex, int& colGroup, int& colMask) const ;
@@ -61,12 +71,13 @@ public:
     virtual void getLinkChildIndices(int urdfLinkIndex, btAlignedObjectArray<int>& childLinkIndices) const;
     
     virtual bool getJointInfo(int urdfLinkIndex, btTransform& parent2joint, btTransform& linkTransformInWorld, btVector3& jointAxisInJointSpace, int& jointType, btScalar& jointLowerLimit, btScalar& jointUpperLimit, btScalar& jointDamping, btScalar& jointFriction) const;
-    
+	virtual bool getJointInfo2(int urdfLinkIndex, btTransform& parent2joint, btTransform& linkTransformInWorld, btVector3& jointAxisInJointSpace, int& jointType, btScalar& jointLowerLimit, btScalar& jointUpperLimit, btScalar& jointDamping, btScalar& jointFriction, btScalar& jointMaxForce, btScalar& jointMaxVelocity) const;
+
     virtual bool getRootTransformInWorld(btTransform& rootTransformInWorld) const;
     
 	virtual int convertLinkVisualShapes(int linkIndex, const char* pathPrefix, const btTransform& inertialFrame) const;
     
-    virtual void convertLinkVisualShapes2(int linkIndex, const char* pathPrefix, const btTransform& inertialFrame, class btCollisionObject* colObj, int objectIndex) const;
+    virtual void convertLinkVisualShapes2(int linkIndex, int urdfIndex, const char* pathPrefix, const btTransform& inertialFrame, class btCollisionObject* colObj, int objectIndex) const;
     virtual void setBodyUniqueId(int bodyId);
     virtual int getBodyUniqueId() const;
     
@@ -75,6 +86,9 @@ public:
     virtual class btCollisionShape* getAllocatedCollisionShape(int index);
 	virtual int getNumModels() const;
     virtual void activateModel(int modelIndex);
+
+	virtual int getNumAllocatedMeshInterfaces() const;
+	virtual btStridingMeshInterface* getAllocatedMeshInterface(int index);
 
 
 };

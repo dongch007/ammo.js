@@ -279,9 +279,9 @@ void b3Win32ThreadSupport::startThreads(const Win32ThreadConstructionInfo& threa
 
 		}
 		
-		DWORD mask = 1;
-		mask = 1<<mask;
-		SetThreadAffinityMask(handle, mask);
+        //SetThreadAffinityMask(handle, 1 << 1); // this is what it was doing originally, a complete disaster for threading performance!
+		//SetThreadAffinityMask(handle, 1 << i); // I'm guessing this was the intention, but is still bad for performance due to one of the threads
+        //  sometimes unable to execute because it wants to be on the same processor as the main thread (my guess)
 
 		threadStatus.m_taskId = i;
 		threadStatus.m_commandId = 0;
@@ -289,6 +289,7 @@ void b3Win32ThreadSupport::startThreads(const Win32ThreadConstructionInfo& threa
 		threadStatus.m_threadHandle = handle;
 		threadStatus.m_lsMemory = threadConstructionInfo.m_lsMemoryFunc();
 		threadStatus.m_userThreadFunc = threadConstructionInfo.m_userThreadFunc;
+		threadStatus.m_lsMemoryReleaseFunc = threadConstructionInfo.m_lsMemoryReleaseFunc;
 
 		printf("started %s thread %d with threadHandle %p\n",threadConstructionInfo.m_uniqueName,i,handle);
 		
@@ -312,9 +313,12 @@ void b3Win32ThreadSupport::stopThreads()
 		{
 			WaitForSingleObject(threadStatus.m_eventCompletetHandle, INFINITE);
 		}
-		
-		delete threadStatus.m_lsMemory;
 
+		if (threadStatus.m_lsMemoryReleaseFunc)
+		{
+			threadStatus.m_lsMemoryReleaseFunc(threadStatus.m_lsMemory);
+		}
+		
 		threadStatus.m_userPtr = 0;
 		SetEvent(threadStatus.m_eventStartHandle);
 		WaitForSingleObject(threadStatus.m_eventCompletetHandle, INFINITE);

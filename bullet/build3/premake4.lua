@@ -30,6 +30,12 @@
 
 	newoption
 	{
+		trigger = "enable_system_glx",
+		description = "Try to link against system glx instead of using glad_glx (default)"
+	}
+
+	newoption
+	{
 		trigger = "enable_system_opengl",
 		description = "Try to link and use the system OpenGL headers version instead of dynamically loading OpenGL (dlopen is default)"
 	}
@@ -44,6 +50,13 @@
 		trigger = "enable_system_x11",
 		description = "Try to link and use system X11 headers instead of dynamically loading X11 (dlopen is default)"
 	}
+
+	newoption
+	{
+		trigger = "enable_static_vr_plugin",
+		description = "Statically link vr plugin (in examples/SharedMemory/plugins/vrSyncPlugin)"
+	}
+
 
 	newoption
 	{
@@ -73,8 +86,21 @@
 
 	newoption
 	{
+		trigger = "standalone-examples",
+		description = "Build standalone examples with reduced dependencies."
+	}
+
+	newoption
+	{
+		trigger = "no-clsocket",
+		description = "Disable clsocket and clsocket tests (used for optional TCP networking in pybullet and shared memory C-API)"
+	}
+
+
+	newoption
+	{
 		trigger = "no-enet",
-		description = "Disable enet and enet tests"
+		description = "Disable enet and enet tests (used for optional UDP networking in pybullet and shared memory C-API)"
 	}
 
 	newoption
@@ -145,11 +171,29 @@ end
 		description = "Double precision version of Bullet"
 	}
 	
+	newoption
+	{
+		trigger = "serial",
+		description = "Enable serial, for testing the VR glove in C++"
+	}
+	
+	newoption
+	{
+		trigger = "audio",
+		description = "Enable audio"
+	}
+	newoption
+	{
+		trigger = "enable_multithreading",
+		description = "enable CPU multithreading for bullet2 libs"
+	}
+	if _OPTIONS["enable_multithreading"] then
+		defines {"BT_THREADSAFE=1"}
+	end
 	if _OPTIONS["double"] then
 		defines {"BT_USE_DOUBLE_PRECISION"}
 	end
 
-	
 	configurations {"Release", "Debug"}
 	configuration "Release"
 		flags { "Optimize", "EnableSSE2","StaticRuntime", "NoMinimalRebuild", "FloatFast"}
@@ -215,6 +259,9 @@ end
 	targetdir( _OPTIONS["targetdir"] or "../bin" )
 	location("./" .. act .. postfix)
 
+	projectRootDir = os.getcwd() .. "/../"
+	print("Project root directory: " .. projectRootDir);
+	
 	if not _OPTIONS["python_include_dir"] then
 			_OPTIONS["python_include_dir"] = default_python_include_dir
 	end
@@ -222,36 +269,132 @@ end
 	if not _OPTIONS["python_lib_dir"] then
 			_OPTIONS["python_lib_dir"] = default_python_lib_dir
 	end
+
+if os.is("Linux") then
+                default_glfw_include_dir = "usr/local/include/GLFW"
+                default_glfw_lib_dir = "/usr/local/lib/"
+		default_glfw_lib_name = "glfw3"
+end
+
+if os.is("macosx") then
+		default_glfw_include_dir = "/usr/local/Cellar/glfw/3.2.1/include"
+		default_glfw_lib_dir = "/usr/local/Cellar/glfw/3.2.1/lib"
+		default_glfw_lib_name = "glfw"
+end
+
+if os.is("Windows") then
+                default_glfw_include_dir = "c:/glfw/include"
+                default_glfw_lib_dir = "c:/glfw/lib"
+		default_glfw_lib_name = "glfw3"
+end
+
+	if not _OPTIONS["glfw_lib_dir"] then
+		_OPTIONS["glfw_lib_dir"] = default_glfw_lib_dir
+	end
+	if not _OPTIONS["glfw_include_dir"] then
+		_OPTIONS["glfw_include_dir"] = default_glfw_include_dir
+	end
+	if not _OPTIONS["glfw_lib_name"] then
+		_OPTIONS["glfw_lib_name"] = default_glfw_lib_name
+	end	
+
 	
 
-	projectRootDir = os.getcwd() .. "/../"
-	print("Project root directory: " .. projectRootDir);
+	newoption
+    {
+			trigger     = "glfw_include_dir",
+			value       = default_glfw_include_dir,
+			description = "GLFW 3.x include directory"
+    }
+   
+	 newoption
+    {
+                        trigger     = "glfw_lib_name",
+                        value       = default_glfw_lib_name,
+                        description = "GLFW 3.x library name (glfw, glfw3)"
+    }
+ 
+    newoption
+    {
+			trigger     = "glfw_lib_dir",
+			value       = default_glfw_lib_dir,
+			description = "(optional) GLFW 3.x library directory "
+    }
+    
+    newoption
+    {
+			trigger     = "enable_glfw",
+			value       = false,
+			description = "(optional) use GLFW 3.x library"
+    }
+    
+	if _OPTIONS["enable_glfw"] then
+		defines {"B3_USE_GLFW"}
+		
+			
+		
+		function initOpenGL()
+		includedirs {
+					projectRootDir .. "examples/ThirdPartyLibs/glad"
+			}
+		
+			includedirs {
+				_OPTIONS["glfw_include_dir"],
+			}
+			
+			libdirs {
+				_OPTIONS["glfw_lib_dir"]
+			}
+			links { _OPTIONS["glfw_lib_name"]}
+			files { projectRootDir .. "examples/ThirdPartyLibs/glad/glad.c" }
+		end
+		function findOpenGL3()
+			return true
+		end
+		function initGlew()
+		end
+		function initX11()
+		links {"X11", "dl","pthread"}
+
+		end
+		
+	else
+		dofile ("findOpenGLGlewGlut.lua")
+		if (not findOpenGL3()) then
+			defines {"NO_OPENGL3"}
+		end
+	end
+
+	
 
 	dofile ("findOpenCL.lua")
 	dofile ("findDirectX11.lua")
-	dofile ("findOpenGLGlewGlut.lua")
-
-	if (not findOpenGL3()) then
-		defines {"NO_OPENGL3"}
-	end
-
+	
+	
+	
 	language "C++"
 
 
+	
+	
+	
+
+	if _OPTIONS["audio"] then
+		include "../examples/TinyAudio"
+	end
+
+	if _OPTIONS["serial"] then
+		include "../examples/ThirdPartyLibs/serial"
+	end
+
 	if not _OPTIONS["no-demos"] then
 		include "../examples/ExampleBrowser"
+		include "../examples/RobotSimulator"
 		include "../examples/OpenGLWindow"
 		include "../examples/ThirdPartyLibs/Gwen"
-		include "../examples/SimpleOpenGL3"
-		include "../examples/TinyRenderer"
-
 		include "../examples/HelloWorld"
-		include "../examples/BasicDemo"
-		include "../examples/InverseDynamics"
-		include "../examples/ExtendedTutorials"
 		include "../examples/SharedMemory"
 		include "../examples/ThirdPartyLibs/BussIK"
-		include "../examples/MultiThreading"
 
 		if _OPTIONS["lua"] then
 		   include "../examples/ThirdPartyLibs/lua-5.2.3"
@@ -259,10 +402,19 @@ end
 		if _OPTIONS["enable_pybullet"] then
 		  include "../examples/pybullet"
 		end
+		include "../examples/SimpleOpenGL3"
+
+		if _OPTIONS["standalone-examples"] then
+			
+			include "../examples/TinyRenderer"
+			include "../examples/BasicDemo"
+			include "../examples/InverseDynamics"
+			include "../examples/ExtendedTutorials"
+			include "../examples/MultiThreading"
+		end
 
 		if not _OPTIONS["no-test"] then
 			include "../test/SharedMemory"
-			
 		end
 	end
 
@@ -270,13 +422,20 @@ end
 		include "../examples/ThirdPartyLibs/midi"
 	end
 	
+	if not _OPTIONS["no-clsocket"] then
+		defines {"BT_ENABLE_CLSOCKET"}
+		include "../examples/ThirdPartyLibs/clsocket"		
+		include "../test/clsocket"
+	end
+
 	if not _OPTIONS["no-enet"] then
+				defines {"BT_ENABLE_ENET"}
+
 				include "../examples/ThirdPartyLibs/enet"
 				include "../test/enet/nat_punchthrough/client"
 				include "../test/enet/nat_punchthrough/server"
 				include "../test/enet/chat/client"
 				include "../test/enet/chat/server"
-				defines {"BT_ENABLE_ENET"}
 	end
 
 	 if _OPTIONS["no-bullet3"] then

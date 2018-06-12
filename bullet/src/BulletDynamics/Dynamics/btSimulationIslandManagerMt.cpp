@@ -15,12 +15,14 @@ subject to the following restrictions:
 
 
 #include "LinearMath/btScalar.h"
+#include "LinearMath/btThreads.h"
 #include "btSimulationIslandManagerMt.h"
 #include "BulletCollision/BroadphaseCollision/btDispatcher.h"
 #include "BulletCollision/NarrowPhaseCollision/btPersistentManifold.h"
 #include "BulletCollision/CollisionDispatch/btCollisionObject.h"
 #include "BulletCollision/CollisionDispatch/btCollisionWorld.h"
 #include "BulletDynamics/ConstraintSolver/btTypedConstraint.h"
+#include "BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolverMt.h"  // for s_minimumContactManifoldsForBatching
 
 //#include <stdio.h>
 #include "LinearMath/btQuickprof.h"
@@ -44,7 +46,7 @@ btSimulationIslandManagerMt::btSimulationIslandManagerMt()
 {
     m_minimumSolverBatchSize = calcBatchCost(0, 128, 0);
     m_batchIslandMinBodyCount = 32;
-    m_islandDispatch = defaultIslandDispatch;
+    m_islandDispatch = parallelIslandDispatch;
     m_batchIsland = NULL;
 }
 
@@ -274,7 +276,7 @@ btSimulationIslandManagerMt::Island* btSimulationIslandManagerMt::allocateIsland
 void btSimulationIslandManagerMt::buildIslands( btDispatcher* dispatcher, btCollisionWorld* collisionWorld )
 {
 
-	BT_PROFILE("islandUnionFindAndQuickSort");
+	BT_PROFILE("buildIslands");
 	
 	btCollisionObjectArray& collisionObjects = collisionWorld->getCollisionObjectArray();
 
@@ -313,13 +315,11 @@ void btSimulationIslandManagerMt::buildIslands( btDispatcher* dispatcher, btColl
 			btAssert((colObj0->getIslandTag() == islandId) || (colObj0->getIslandTag() == -1));
 			if (colObj0->getIslandTag() == islandId)
 			{
-				if (colObj0->getActivationState()== ACTIVE_TAG)
+				if (colObj0->getActivationState()== ACTIVE_TAG ||
+				   colObj0->getActivationState()== DISABLE_DEACTIVATION)
 				{
 					allSleeping = false;
-				}
-				if (colObj0->getActivationState()== DISABLE_DEACTIVATION)
-				{
-					allSleeping = false;
+					break;
 				}
 			}
 		}
@@ -545,38 +545,117 @@ void btSimulationIslandManagerMt::mergeIslands()
 }
 
 
-void btSimulationIslandManagerMt::defaultIslandDispatch( btAlignedObjectArray<Island*>* islandsPtr, IslandCallback* callback )
+void btSimulationIslandManagerMt::solveIsland(btConstraintSolver* solver, Island& island, const SolverParams& solverParams)
 {
+    btPersistentManifold** manifolds = island.manifoldArray.size() ? &island.manifoldArray[ 0 ] : NULL;
+    btTypedConstraint** constraintsPtr = island.constraintArray.size() ? &island.constraintArray[ 0 ] : NULL;
+    solver->solveGroup( &island.bodyArray[ 0 ],
+        island.bodyArray.size(),
+        manifolds,
+        island.manifoldArray.size(),
+        constraintsPtr,
+        island.constraintArray.size(),
+        *solverParams.m_solverInfo,
+        solverParams.m_debugDrawer,
+        solverParams.m_dispatcher
+    );
+}
+
+
+void btSimulationIslandManagerMt::serialIslandDispatch( btAlignedObjectArray<Island*>* islandsPtr, const SolverParams& solverParams )
+{
+    BT_PROFILE( "serialIslandDispatch" );
     // serial dispatch
     btAlignedObjectArray<Island*>& islands = *islandsPtr;
+    btConstraintSolver* solver = solverParams.m_solverMt ? solverParams.m_solverMt : solverParams.m_solverPool;
     for ( int i = 0; i < islands.size(); ++i )
     {
-        Island* island = islands[ i ];
-        btPersistentManifold** manifolds = island->manifoldArray.size() ? &island->manifoldArray[ 0 ] : NULL;
-        btTypedConstraint** constraintsPtr = island->constraintArray.size() ? &island->constraintArray[ 0 ] : NULL;
-        callback->processIsland( &island->bodyArray[ 0 ],
-                                 island->bodyArray.size(),
-                                 manifolds,
-                                 island->manifoldArray.size(),
-                                 constraintsPtr,
-                                 island->constraintArray.size(),
-                                 island->id
-                                 );
+        solveIsland(solver, *islands[ i ], solverParams);
     }
 }
+
+
+struct UpdateIslandDispatcher : public btIParallelForBody
+{
+    btAlignedObjectArray<btSimulationIslandManagerMt::Island*>& m_islandsPtr;
+    const btSimulationIslandManagerMt::SolverParams& m_solverParams;
+
+    UpdateIslandDispatcher(btAlignedObjectArray<btSimulationIslandManagerMt::Island*>& islandsPtr, const btSimulationIslandManagerMt::SolverParams& solverParams)
+        : m_islandsPtr(islandsPtr), m_solverParams(solverParams)
+    {}
+
+    void forLoop( int iBegin, int iEnd ) const BT_OVERRIDE
+    {
+        btConstraintSolver* solver = m_solverParams.m_solverPool;
+        for ( int i = iBegin; i < iEnd; ++i )
+        {
+            btSimulationIslandManagerMt::Island* island = m_islandsPtr[ i ];
+            btSimulationIslandManagerMt::solveIsland( solver, *island, m_solverParams );
+        }
+    }
+};
+
+
+void btSimulationIslandManagerMt::parallelIslandDispatch( btAlignedObjectArray<Island*>* islandsPtr, const SolverParams& solverParams )
+{
+    BT_PROFILE( "parallelIslandDispatch" );
+    //
+    // if there are islands with many contacts, it may be faster to submit these
+    // large islands *serially* to a single parallel constraint solver, and then later
+    // submit the remaining smaller islands in parallel to multiple sequential solvers.
+    //
+    // Some task schedulers do not deal well with nested parallelFor loops. One implementation
+    // of OpenMP was actually slower than doing everything single-threaded. Intel TBB
+    // on the other hand, seems to do a pretty respectable job with it.
+    //
+    // When solving islands in parallel, the worst case performance happens when there
+    // is one very large island and then perhaps a smattering of very small
+    // islands -- one worker thread takes the large island and the remaining workers
+    // tear through the smaller islands and then sit idle waiting for the first worker
+    // to finish. Solving islands in parallel works best when there are numerous small
+    // islands, roughly equal in size.
+    //
+    // By contrast, the other approach -- the parallel constraint solver -- is only
+    // able to deliver a worthwhile speedup when the island is large. For smaller islands,
+    // it is difficult to extract a useful amount of parallelism -- the overhead of grouping
+    // the constraints into batches and sending the batches to worker threads can nullify
+    // any gains from parallelism.
+    //
+
+    UpdateIslandDispatcher dispatcher(*islandsPtr, solverParams);
+    // We take advantage of the fact the islands are sorted in order of decreasing size
+    int iBegin = 0;
+    if (solverParams.m_solverMt)
+    {
+        while ( iBegin < islandsPtr->size() )
+        {
+            btSimulationIslandManagerMt::Island* island = ( *islandsPtr )[ iBegin ];
+            if ( island->manifoldArray.size() < btSequentialImpulseConstraintSolverMt::s_minimumContactManifoldsForBatching )
+            {
+                // OK to submit the rest of the array in parallel
+                break;
+            }
+            // serial dispatch to parallel solver for large islands (if any)
+            solveIsland(solverParams.m_solverMt, *island, solverParams);
+            ++iBegin;
+        }
+    }
+    // parallel dispatch to sequential solvers for rest
+    btParallelFor( iBegin, islandsPtr->size(), 1, dispatcher );
+}
+
 
 ///@todo: this is random access, it can be walked 'cache friendly'!
 void btSimulationIslandManagerMt::buildAndProcessIslands( btDispatcher* dispatcher,
                                                         btCollisionWorld* collisionWorld,
                                                         btAlignedObjectArray<btTypedConstraint*>& constraints,
-                                                        IslandCallback* callback
+                                                        const SolverParams& solverParams
                                                         )
 {
+	BT_PROFILE("buildAndProcessIslands");
 	btCollisionObjectArray& collisionObjects = collisionWorld->getCollisionObjectArray();
 
 	buildIslands(dispatcher,collisionWorld);
-
-	BT_PROFILE("processIslands");
 
 	if(!getSplitIslands())
 	{
@@ -609,14 +688,17 @@ void btSimulationIslandManagerMt::buildAndProcessIslands( btDispatcher* dispatch
             }
         }
         btTypedConstraint** constraintsPtr = constraints.size() ? &constraints[ 0 ] : NULL;
-		callback->processIsland(&collisionObjects[0],
-                                 collisionObjects.size(),
-                                 manifolds,
-                                 maxNumManifolds,
-                                 constraintsPtr,
-                                 constraints.size(),
-                                 -1
-                                 );
+        btConstraintSolver* solver = solverParams.m_solverMt ? solverParams.m_solverMt : solverParams.m_solverPool;
+        solver->solveGroup(&collisionObjects[0],
+                           collisionObjects.size(),
+                           manifolds,
+                           maxNumManifolds,
+                           constraintsPtr,
+                           constraints.size(),
+                           *solverParams.m_solverInfo,
+                           solverParams.m_debugDrawer,
+                           solverParams.m_dispatcher
+                           );
 	}
 	else
 	{
@@ -636,6 +718,6 @@ void btSimulationIslandManagerMt::buildAndProcessIslands( btDispatcher* dispatch
             mergeIslands();
         }
         // dispatch islands to solver
-        m_islandDispatch( &m_activeIslands, callback );
+        m_islandDispatch( &m_activeIslands, solverParams );
 	}
 }

@@ -4,7 +4,7 @@
 #include "../CommonInterfaces/CommonGUIHelperInterface.h"
 #include "SharedMemoryCommands.h"
 #include "PhysicsCommandProcessorInterface.h"
-
+#include "../Utils/b3Clock.h"
 
 #include "LinearMath/btHashMap.h"
 #include "LinearMath/btAlignedObjectArray.h"
@@ -13,10 +13,27 @@
 #include "BodyJointInfoUtility.h"
 #include <string>
 
+#include "SharedMemoryUserData.h"
+
+struct UserDataCache {
+	btHashMap<btHashInt, SharedMemoryUserData> m_userDataMap;
+	btHashMap<btHashString, int> m_keyToUserDataIdMap;
+
+	~UserDataCache() {
+	}
+};
+
 struct BodyJointInfoCache2
 {
 	std::string m_baseName;
 	btAlignedObjectArray<b3JointInfo> m_jointInfo;
+	std::string m_bodyName;
+
+	// Joint index -> user data.
+	btHashMap<btHashInt, UserDataCache> m_jointToUserDataMap;
+
+	~BodyJointInfoCache2() {
+	}
 };
 
 
@@ -28,6 +45,9 @@ struct PhysicsDirectInternalData
 	btAlignedObjectArray<char> m_serverDNA;
 	SharedMemoryCommand m_command;
 	SharedMemoryStatus m_serverStatus;
+
+	SharedMemoryCommand m_tmpInfoRequestCommand;
+	SharedMemoryStatus m_tmpInfoStatus;
 	bool m_hasStatus;
 	bool m_verboseOutput;
 	
@@ -39,7 +59,7 @@ struct PhysicsDirectInternalData
     btHashMap<btHashInt,b3UserConstraint> m_userConstraintInfoMap;
 	
 	char    m_bulletStreamDataServerToClient[SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE];
-
+	btAlignedObjectArray<double> m_cachedMassMatrix;
 	int m_cachedCameraPixelsWidth;
 	int m_cachedCameraPixelsHeight;
 	btAlignedObjectArray<unsigned char> m_cachedCameraPixelsRGBA;
@@ -50,23 +70,39 @@ struct PhysicsDirectInternalData
 	btAlignedObjectArray<b3OverlappingObject> m_cachedOverlappingObjects;
 
 	btAlignedObjectArray<b3VisualShapeData> m_cachedVisualShapes;
+	btAlignedObjectArray<b3CollisionShapeData> m_cachedCollisionShapes;
+
     btAlignedObjectArray<b3VRControllerEvent> m_cachedVREvents;
+
+	btAlignedObjectArray<b3KeyboardEvent> m_cachedKeyboardEvents;
+	btAlignedObjectArray<b3MouseEvent> m_cachedMouseEvents;
 
 	btAlignedObjectArray<b3RayHitInfo>	m_raycastHits;
 
 	PhysicsCommandProcessorInterface* m_commandProcessor;
 	bool m_ownsCommandProcessor;
+	double m_timeOutInSeconds;
 
 	PhysicsDirectInternalData()
 		:m_hasStatus(false),
 		m_verboseOutput(false),
-		m_ownsCommandProcessor(false)
+		m_cachedCameraPixelsWidth(0),
+		m_cachedCameraPixelsHeight(0),
+		m_commandProcessor(NULL),
+		m_ownsCommandProcessor(false),
+		m_timeOutInSeconds(1e30)
 	{
+		memset(&m_command, 0, sizeof(m_command));
+		memset(&m_serverStatus, 0, sizeof(m_serverStatus));
+		memset(m_bulletStreamDataServerToClient, 0, sizeof(m_bulletStreamDataServerToClient));
 	}
 };
 
 PhysicsDirect::PhysicsDirect(PhysicsCommandProcessorInterface* physSdk, bool passSdkOwnership)
 {
+	int sz = sizeof(SharedMemoryCommand);
+	int sz2 = sizeof(SharedMemoryStatus);
+
 	m_data = new PhysicsDirectInternalData;
 	m_data->m_commandProcessor = physSdk;
 	m_data->m_ownsCommandProcessor = passSdkOwnership;
@@ -100,17 +136,6 @@ void PhysicsDirect::resetData()
 		BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap.getAtIndex(i);
 		if (bodyJointsPtr && *bodyJointsPtr)
 		{
-			BodyJointInfoCache2* bodyJoints = *bodyJointsPtr;
-			for (int j = 0; j<bodyJoints->m_jointInfo.size(); j++) {
-				if (bodyJoints->m_jointInfo[j].m_jointName)
-				{
-					free(bodyJoints->m_jointInfo[j].m_jointName);
-				}
-				if (bodyJoints->m_jointInfo[j].m_linkName)
-				{
-					free(bodyJoints->m_jointInfo[j].m_linkName);
-				}
-			}
 			delete (*bodyJointsPtr);
 		}
 	}
@@ -137,8 +162,10 @@ bool PhysicsDirect::connect()
 		}
 		else
 		{
-			int timeout = 1024 * 1024 * 1024;
-			while ((!hasStatus) && (timeout-- > 0))
+			b3Clock clock;
+			double timeSec = clock.getTimeInSeconds();
+
+			while ((!hasStatus) && (clock.getTimeInSeconds()-timeSec <10 ))
 			{
 				const  SharedMemoryStatus* stat = processServerStatus();
 				if (stat)
@@ -164,7 +191,8 @@ bool PhysicsDirect::connect(struct GUIHelperInterface* guiHelper)
 
 void PhysicsDirect::renderScene()
 {
-	m_data->m_commandProcessor->renderScene();
+	int renderFlags = 0;
+	m_data->m_commandProcessor->renderScene(renderFlags);
 }
 
 void PhysicsDirect::debugDraw(int debugDrawMode)
@@ -226,8 +254,11 @@ bool PhysicsDirect::processDebugLines(const struct SharedMemoryCommand& orgComma
 
 		bool hasStatus = m_data->m_commandProcessor->processCommand(command,m_data->m_serverStatus,&m_data->m_bulletStreamDataServerToClient[0],SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 
-		int timeout = 1024 * 1024 * 1024;
-		while ((!hasStatus) && (timeout-- > 0))
+		b3Clock clock;
+		double startTime = clock.getTimeInSeconds();
+		double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+		while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 		{
 			const  SharedMemoryStatus* stat = processServerStatus();
 			if (stat)
@@ -308,8 +339,11 @@ bool PhysicsDirect::processVisualShapeData(const struct SharedMemoryCommand& org
 	{
 		bool hasStatus = m_data->m_commandProcessor->processCommand(command, m_data->m_serverStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 
-		int timeout = 1024 * 1024 * 1024;
-		while ((!hasStatus) && (timeout-- > 0))
+		b3Clock clock;
+		double startTime = clock.getTimeInSeconds();
+		double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+		while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 		{
 			const  SharedMemoryStatus* stat = processServerStatus();
 			if (stat)
@@ -359,8 +393,11 @@ bool PhysicsDirect::processOverlappingObjects(const struct SharedMemoryCommand& 
 	{
 		bool hasStatus = m_data->m_commandProcessor->processCommand(command, m_data->m_serverStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 
-		int timeout = 1024 * 1024 * 1024;
-		while ((!hasStatus) && (timeout-- > 0))
+		b3Clock clock;
+		double startTime = clock.getTimeInSeconds();
+		double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+		while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 		{
 			const  SharedMemoryStatus* stat = processServerStatus();
 			if (stat)
@@ -414,8 +451,11 @@ bool PhysicsDirect::processContactPointData(const struct SharedMemoryCommand& or
     {
         bool hasStatus = m_data->m_commandProcessor->processCommand(command,m_data->m_serverStatus,&m_data->m_bulletStreamDataServerToClient[0],SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
         
-		int timeout = 1024 * 1024 * 1024;
-		while ((!hasStatus) && (timeout-- > 0))
+		b3Clock clock;
+		double startTime = clock.getTimeInSeconds();
+		double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+		while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 		{
 			const  SharedMemoryStatus* stat = processServerStatus();
 			if (stat)
@@ -475,8 +515,11 @@ bool PhysicsDirect::processCamera(const struct SharedMemoryCommand& orgCommand)
 
 		bool hasStatus = m_data->m_commandProcessor->processCommand(command,m_data->m_serverStatus,&m_data->m_bulletStreamDataServerToClient[0],SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 		
-		int timeout = 1024 * 1024 * 1024;
-		while ((!hasStatus) && (timeout-- > 0))
+		b3Clock clock;
+		double startTime = clock.getTimeInSeconds();
+		double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+		while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 		{
 			const  SharedMemoryStatus* stat = processServerStatus();
 			if (stat)
@@ -584,6 +627,7 @@ void PhysicsDirect::processBodyJointInfo(int bodyUniqueId, const SharedMemorySta
 	
     BodyJointInfoCache2* bodyJoints = new BodyJointInfoCache2;
     m_data->m_bodyJointMap.insert(bodyUniqueId,bodyJoints);
+	bodyJoints->m_bodyName = serverCmd.m_dataStreamArguments.m_bodyName;
 
     for (int i = 0; i < bf.m_multiBodies.size(); i++) 
     {
@@ -623,6 +667,39 @@ void PhysicsDirect::processBodyJointInfo(int bodyUniqueId, const SharedMemorySta
     }
 }
 
+void PhysicsDirect::processAddUserData(const struct SharedMemoryStatus& serverCmd) {
+	const b3UserDataGlobalIdentifier userDataGlobalId = serverCmd.m_userDataResponseArgs.m_userDataGlobalId;
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[userDataGlobalId.m_bodyUniqueId];
+	if (bodyJointsPtr && *bodyJointsPtr) 
+	{
+		UserDataCache* userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[userDataGlobalId.m_linkIndex];
+		if (!userDataCachePtr) 
+		{
+			UserDataCache cache;
+			(*bodyJointsPtr)->m_jointToUserDataMap.insert(userDataGlobalId.m_linkIndex, cache);
+		}
+		userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[userDataGlobalId.m_linkIndex];
+
+		const char *dataStream = m_data->m_bulletStreamDataServerToClient;
+
+		b3UserDataValue userDataValue;
+		userDataValue.m_type = serverCmd.m_userDataResponseArgs.m_valueType;
+		userDataValue.m_length = serverCmd.m_userDataResponseArgs.m_valueLength;
+		SharedMemoryUserData *userDataPtr = userDataCachePtr->m_userDataMap[userDataGlobalId.m_userDataId];
+		if (userDataPtr) {
+			// Only replace the value.
+			(userDataPtr)->replaceValue(dataStream,serverCmd.m_userDataResponseArgs.m_valueLength,userDataValue.m_type);
+		}
+		else {
+			// Add a new user data entry.
+			(userDataCachePtr)->m_userDataMap.insert(userDataGlobalId.m_userDataId, SharedMemoryUserData(serverCmd.m_userDataResponseArgs.m_key));
+			userDataPtr = (userDataCachePtr)->m_userDataMap[userDataGlobalId.m_userDataId];
+			userDataPtr->replaceValue(dataStream,serverCmd.m_userDataResponseArgs.m_valueLength,userDataValue.m_type);
+			(userDataCachePtr)->m_keyToUserDataIdMap.insert(serverCmd.m_userDataResponseArgs.m_key, userDataGlobalId.m_userDataId);
+		}
+	}
+}
+
 void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd)
 {
 	switch (serverCmd.m_type)
@@ -648,10 +725,38 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 		{
 			b3Printf("Request VR Events completed");
 		}
-		m_data->m_cachedVREvents.clear();
+		m_data->m_cachedVREvents.resize(serverCmd.m_sendVREvents.m_numVRControllerEvents);
 		for (int i=0;i< serverCmd.m_sendVREvents.m_numVRControllerEvents;i++)
 		{
-			m_data->m_cachedVREvents.push_back(serverCmd.m_sendVREvents.m_controllerEvents[i]);
+			m_data->m_cachedVREvents[i] = serverCmd.m_sendVREvents.m_controllerEvents[i];
+		}
+		break;
+	}
+	case CMD_REQUEST_KEYBOARD_EVENTS_DATA_COMPLETED:
+	{
+		if (m_data->m_verboseOutput)
+		{
+			b3Printf("Request keyboard events completed");
+		}
+		m_data->m_cachedKeyboardEvents.resize(serverCmd.m_sendKeyboardEvents.m_numKeyboardEvents);
+		for (int i=0;i<serverCmd.m_sendKeyboardEvents.m_numKeyboardEvents;i++)
+		{
+			m_data->m_cachedKeyboardEvents[i] = serverCmd.m_sendKeyboardEvents.m_keyboardEvents[i];
+		}
+		break;
+	}
+
+	case CMD_REQUEST_MOUSE_EVENTS_DATA_COMPLETED:
+	{
+		B3_PROFILE("CMD_REQUEST_MOUSE_EVENTS_DATA_COMPLETED");
+		if (m_data->m_verboseOutput)
+		{
+			b3Printf("Request mouse events completed");
+		}
+		m_data->m_cachedMouseEvents.resize(serverCmd.m_sendMouseEvents.m_numMouseEvents);
+		for (int i=0;i<serverCmd.m_sendMouseEvents.m_numMouseEvents;i++)
+		{
+			m_data->m_cachedMouseEvents[i] = serverCmd.m_sendMouseEvents.m_mouseEvents[i];
 		}
 		break;
 	}
@@ -688,6 +793,26 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
         m_data->m_userConstraintInfoMap.remove(cid);
         break;
     }
+	case CMD_REMOVE_BODY_FAILED:
+	{
+		b3Warning("Remove body failed\n");
+		break;
+	}
+	case CMD_REMOVE_BODY_COMPLETED:
+	{
+		for (int i=0;i<serverCmd.m_removeObjectArgs.m_numBodies;i++)
+		{
+			int bodyUniqueId = serverCmd.m_removeObjectArgs.m_bodyUniqueIds[i];
+			removeCachedBody(bodyUniqueId);
+		}
+		for (int i=0;i<serverCmd.m_removeObjectArgs.m_numUserConstraints;i++)
+		{
+			int key = serverCmd.m_removeObjectArgs.m_userConstraintUniqueIds[i];
+			m_data->m_userConstraintInfoMap.remove(key);
+		}
+
+		break;
+	}
 	case CMD_CHANGE_USER_CONSTRAINT_COMPLETED:
 	{
         int cid = serverCmd.m_userConstraintResultArgs.m_userConstraintUniqueId;
@@ -712,10 +837,29 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 			{
 				userConstraintPtr->m_maxAppliedForce = serverConstraint->m_maxAppliedForce;
 			}
+			if (serverCmd.m_updateFlags & USER_CONSTRAINT_CHANGE_GEAR_RATIO)
+			{
+				userConstraintPtr->m_gearRatio = serverConstraint->m_gearRatio;
+			}
+			if (serverCmd.m_updateFlags & USER_CONSTRAINT_CHANGE_RELATIVE_POSITION_TARGET)
+			{
+				userConstraintPtr->m_relativePositionTarget = serverConstraint->m_relativePositionTarget;
+			}
+			if (serverCmd.m_updateFlags & USER_CONSTRAINT_CHANGE_ERP)
+			{
+				userConstraintPtr->m_erp = serverConstraint->m_erp;
+			}
+			if (serverCmd.m_updateFlags & USER_CONSTRAINT_CHANGE_GEAR_AUX_LINK)
+			{
+				userConstraintPtr->m_gearAuxLink = serverConstraint->m_gearAuxLink;
+			}
 		}
 		break;
 	}
-
+	case CMD_USER_CONSTRAINT_REQUEST_STATE_COMPLETED:
+	{
+		break;
+	}
 	case CMD_SYNC_BODY_INFO_COMPLETED:
 	case CMD_MJCF_LOADING_COMPLETED:
 	case CMD_SDF_LOADING_COMPLETED:
@@ -727,24 +871,27 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 		for (int i=0;i<numConstraints;i++)
 		{
 			int constraintUid = serverCmd.m_sdfLoadedArgs.m_userConstraintUniqueIds[i];
-			SharedMemoryCommand infoRequestCommand;
-			infoRequestCommand.m_type = CMD_USER_CONSTRAINT;
-			infoRequestCommand.m_updateFlags = USER_CONSTRAINT_REQUEST_INFO;
-            infoRequestCommand.m_userConstraintArguments.m_userConstraintUniqueId = constraintUid;
-			SharedMemoryStatus infoStatus;
-			bool hasStatus = m_data->m_commandProcessor->processCommand(infoRequestCommand, infoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+			
+			m_data->m_tmpInfoRequestCommand.m_type = CMD_USER_CONSTRAINT;
+			m_data->m_tmpInfoRequestCommand.m_updateFlags = USER_CONSTRAINT_REQUEST_INFO;
+            m_data->m_tmpInfoRequestCommand.m_userConstraintArguments.m_userConstraintUniqueId = constraintUid;
+			
+			bool hasStatus = m_data->m_commandProcessor->processCommand(m_data->m_tmpInfoRequestCommand, m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 					
 
-			int timeout = 1024 * 1024 * 1024;
-			while ((!hasStatus) && (timeout-- > 0))
+			b3Clock clock;
+			double startTime = clock.getTimeInSeconds();
+			double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+			while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 			{
-				hasStatus = m_data->m_commandProcessor->receiveStatus(infoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+				hasStatus = m_data->m_commandProcessor->receiveStatus(m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 			}
 
 			if (hasStatus)
 			{
-				int cid = infoStatus.m_userConstraintResultArgs.m_userConstraintUniqueId;
-				m_data->m_userConstraintInfoMap.insert(cid,infoStatus.m_userConstraintResultArgs);
+				int cid = m_data->m_tmpInfoStatus.m_userConstraintResultArgs.m_userConstraintUniqueId;
+				m_data->m_userConstraintInfoMap.insert(cid,m_data->m_tmpInfoStatus.m_userConstraintResultArgs);
 			}
 		}
 
@@ -752,26 +899,30 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 		for (int i = 0; i<numBodies; i++)
 		{
 			int bodyUniqueId = serverCmd.m_sdfLoadedArgs.m_bodyUniqueIds[i];
-			SharedMemoryCommand infoRequestCommand;
-			infoRequestCommand.m_type = CMD_REQUEST_BODY_INFO;
-			infoRequestCommand.m_sdfRequestInfoArgs.m_bodyUniqueId = bodyUniqueId;
-			SharedMemoryStatus infoStatus;
-			bool hasStatus = m_data->m_commandProcessor->processCommand(infoRequestCommand, infoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+			
+			m_data->m_tmpInfoRequestCommand.m_type = CMD_REQUEST_BODY_INFO;
+			m_data->m_tmpInfoRequestCommand.m_sdfRequestInfoArgs.m_bodyUniqueId = bodyUniqueId;
+			
+			bool hasStatus = m_data->m_commandProcessor->processCommand(m_data->m_tmpInfoRequestCommand, m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 					
 
-			int timeout = 1024 * 1024 * 1024;
-			while ((!hasStatus) && (timeout-- > 0))
+			b3Clock clock;
+			double startTime = clock.getTimeInSeconds();
+			double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+			while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
 			{
-				hasStatus = m_data->m_commandProcessor->receiveStatus(infoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+				hasStatus = m_data->m_commandProcessor->receiveStatus(m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
 			}
 
 			if (hasStatus)
 			{
-				processBodyJointInfo(bodyUniqueId, infoStatus);
+				processBodyJointInfo(bodyUniqueId, m_data->m_tmpInfoStatus);
 			}
 		}
 		break;
 	}
+	case CMD_CREATE_MULTI_BODY_COMPLETED:
 	case CMD_URDF_LOADING_COMPLETED:
 	{
 
@@ -792,6 +943,16 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 		break;
 	}
 	
+	case CMD_REQUEST_OPENGL_VISUALIZER_CAMERA_COMPLETED:
+	{
+		break;
+	}
+
+	case CMD_REQUEST_OPENGL_VISUALIZER_CAMERA_FAILED:
+	{
+		b3Warning("requestOpenGLVisualizeCamera failed");
+		break;
+	}
 	case CMD_REMOVE_USER_CONSTRAINT_FAILED:
 	{
 		b3Warning("removeConstraint failed");
@@ -799,13 +960,225 @@ void PhysicsDirect::postProcessStatus(const struct SharedMemoryStatus& serverCmd
 	}
 	case CMD_CHANGE_USER_CONSTRAINT_FAILED:
 	{
-		b3Warning("changeConstraint failed");
+		//b3Warning("changeConstraint failed");
 		break;
 	}
 
 	case CMD_USER_CONSTRAINT_FAILED:
 	{
 		b3Warning("createConstraint failed");
+		break;
+	}
+	
+	case CMD_CREATE_COLLISION_SHAPE_FAILED:
+	{
+		b3Warning("createCollisionShape failed");
+		break;
+	}
+	case CMD_CREATE_COLLISION_SHAPE_COMPLETED:
+	{
+		break;
+	}
+	
+	case CMD_CREATE_VISUAL_SHAPE_FAILED:
+	{
+		b3Warning("createVisualShape failed");
+		break;
+	}
+	case CMD_CREATE_VISUAL_SHAPE_COMPLETED:
+	{
+		break;
+	}
+	
+	case CMD_CREATE_MULTI_BODY_FAILED:
+	{
+		b3Warning("createMultiBody failed");
+		break;
+	}
+	case CMD_REQUEST_COLLISION_INFO_COMPLETED:
+	{
+		break;
+	}
+	case CMD_REQUEST_COLLISION_INFO_FAILED:
+	{
+		b3Warning("Request getCollisionInfo failed");
+		break;
+	}
+
+	case CMD_CUSTOM_COMMAND_COMPLETED:
+	{
+		break;
+	}
+	case CMD_CUSTOM_COMMAND_FAILED:
+	{
+		b3Warning("custom plugin command failed");
+		break;
+	}
+	case CMD_CLIENT_COMMAND_COMPLETED:
+		{
+			break;
+		}
+	case CMD_CALCULATED_JACOBIAN_COMPLETED:
+	{
+		break;
+	}
+	case CMD_CALCULATED_JACOBIAN_FAILED:
+	{
+		b3Warning("jacobian calculation failed");
+		break;
+	}
+	case CMD_CALCULATED_MASS_MATRIX_FAILED:
+		{
+			b3Warning("calculate mass matrix failed");
+			break;
+		}
+	case CMD_CALCULATED_MASS_MATRIX_COMPLETED:
+		{
+			double* matrixData = (double*)&m_data->m_bulletStreamDataServerToClient[0];
+			m_data->m_cachedMassMatrix.resize(serverCmd.m_massMatrixResultArgs.m_dofCount*serverCmd.m_massMatrixResultArgs.m_dofCount);
+			for (int i=0;i<serverCmd.m_massMatrixResultArgs.m_dofCount*serverCmd.m_massMatrixResultArgs.m_dofCount;i++)
+			{
+				m_data->m_cachedMassMatrix[i] = matrixData[i];
+			}
+			break;
+		}
+	case CMD_ACTUAL_STATE_UPDATE_COMPLETED:
+		{
+			break;
+		}
+	case CMD_DESIRED_STATE_RECEIVED_COMPLETED:
+		{
+			break;
+		}
+	case CMD_STEP_FORWARD_SIMULATION_COMPLETED:
+		{
+			break;
+		}
+	case CMD_REQUEST_PHYSICS_SIMULATION_PARAMETERS_COMPLETED:
+		{
+			break;
+		}
+	case CMD_SAVE_STATE_COMPLETED:
+	{
+		break;
+	}
+	case CMD_COLLISION_SHAPE_INFO_FAILED:
+	{
+		b3Warning("getCollisionShapeData failed");
+		break;
+	}
+	case CMD_COLLISION_SHAPE_INFO_COMPLETED:
+	{
+		B3_PROFILE("CMD_COLLISION_SHAPE_INFO_COMPLETED");
+		if (m_data->m_verboseOutput)
+		{
+			b3Printf("Collision Shape Information Request OK\n");
+		}
+		int numCollisionShapesCopied = serverCmd.m_sendCollisionShapeArgs.m_numCollisionShapes;
+		m_data->m_cachedCollisionShapes.resize(numCollisionShapesCopied);
+		b3CollisionShapeData* shapeData = (b3CollisionShapeData*)&m_data->m_bulletStreamDataServerToClient[0];
+		for (int i = 0; i < numCollisionShapesCopied; i++)
+		{
+			m_data->m_cachedCollisionShapes[i] = shapeData[i];
+		}
+		break;
+	}
+	case CMD_RESTORE_STATE_FAILED:
+	{
+		b3Warning("restoreState failed");
+		break;
+	}
+	case CMD_RESTORE_STATE_COMPLETED:
+	{
+		break;
+	}
+	case CMD_BULLET_SAVING_COMPLETED:
+	{
+		break;
+	}
+	case CMD_LOAD_SOFT_BODY_FAILED:
+	{
+		b3Warning("loadSoftBody failed");
+		break;
+	}
+	case CMD_LOAD_SOFT_BODY_COMPLETED:
+	{
+		break;
+	}
+	case CMD_SYNC_USER_DATA_FAILED:
+	{
+		b3Warning("Synchronizing user data failed.");
+		break;
+	}
+	case CMD_ADD_USER_DATA_FAILED:
+	{
+		b3Warning("Adding user data failed (do the specified body and link exist?)");
+		break;
+	}
+	case CMD_REMOVE_USER_DATA_FAILED:
+	{
+		b3Warning("Removing user data failed");
+		break;
+	}
+	case CMD_ADD_USER_DATA_COMPLETED:
+	{
+		processAddUserData(serverCmd);
+		break;
+	}
+	case CMD_SYNC_USER_DATA_COMPLETED:
+	{
+		B3_PROFILE("CMD_SYNC_USER_DATA_COMPLETED");
+		// Remove all cached user data entries.
+		for(int i=0; i<m_data->m_bodyJointMap.size(); i++)
+		{
+			BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap.getAtIndex(i);
+			if (bodyJointsPtr && *bodyJointsPtr)
+			{
+				(*bodyJointsPtr)->m_jointToUserDataMap.clear();
+			}
+		}
+		const int numIdentifiers = serverCmd.m_syncUserDataArgs.m_numUserDataIdentifiers;
+		b3UserDataGlobalIdentifier *identifiers = new b3UserDataGlobalIdentifier[numIdentifiers];
+		memcpy(identifiers, &m_data->m_bulletStreamDataServerToClient[0], numIdentifiers * sizeof(b3UserDataGlobalIdentifier));
+
+		for (int i=0; i<numIdentifiers; i++) {
+			m_data->m_tmpInfoRequestCommand.m_type = CMD_REQUEST_USER_DATA;
+			m_data->m_tmpInfoRequestCommand.m_userDataRequestArgs = identifiers[i];
+
+			bool hasStatus = m_data->m_commandProcessor->processCommand(m_data->m_tmpInfoRequestCommand, m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+
+			b3Clock clock;
+			double startTime = clock.getTimeInSeconds();
+			double timeOutInSeconds = m_data->m_timeOutInSeconds;
+
+			while ((!hasStatus) && (clock.getTimeInSeconds()-startTime < timeOutInSeconds))
+			{
+				hasStatus = m_data->m_commandProcessor->receiveStatus(m_data->m_tmpInfoStatus, &m_data->m_bulletStreamDataServerToClient[0], SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE);
+			}
+
+			if (hasStatus)
+			{
+				processAddUserData(m_data->m_tmpInfoStatus);
+			}
+		}
+		delete[] identifiers;
+		break;
+	}
+	case CMD_REMOVE_USER_DATA_COMPLETED:
+	{
+		const b3UserDataGlobalIdentifier userDataGlobalId = serverCmd.m_removeUserDataResponseArgs;
+		BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[userDataGlobalId.m_bodyUniqueId];
+		if (bodyJointsPtr && *bodyJointsPtr) {
+			UserDataCache *userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[userDataGlobalId.m_linkIndex];
+			if (userDataCachePtr) 
+			{
+				SharedMemoryUserData* userDataPtr = (userDataCachePtr)->m_userDataMap[userDataGlobalId.m_userDataId];
+				if (userDataPtr) {
+					(userDataCachePtr)->m_keyToUserDataIdMap.remove((userDataPtr)->m_key.c_str());
+					(userDataCachePtr)->m_userDataMap.remove(userDataGlobalId.m_userDataId);
+				}
+			}
+		}
 		break;
 	}
 	default:
@@ -857,6 +1230,17 @@ int PhysicsDirect::getNumBodies() const
 	return m_data->m_bodyJointMap.size();
 }
 
+void PhysicsDirect::removeCachedBody(int bodyUniqueId)
+{
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[bodyUniqueId];
+	if (bodyJointsPtr && *bodyJointsPtr)
+	{
+		delete (*bodyJointsPtr);
+		m_data->m_bodyJointMap.remove(bodyUniqueId);
+	}
+}
+
+
 int PhysicsDirect::getNumUserConstraints() const
 {
     return m_data->m_userConstraintInfoMap.size();
@@ -873,7 +1257,14 @@ int PhysicsDirect::getUserConstraintInfo(int constraintUniqueId, struct b3UserCo
     return 0;
 }
 
-
+int PhysicsDirect::getUserConstraintId(int serialIndex) const
+{
+	if ((serialIndex >= 0) && (serialIndex < getNumUserConstraints()))
+	{
+		return m_data->m_userConstraintInfoMap.getKeyAtIndex(serialIndex).getUid1();
+	}
+	return -1;
+}
 
 int PhysicsDirect::getBodyUniqueId(int serialIndex) const
 {
@@ -890,7 +1281,8 @@ bool PhysicsDirect::getBodyInfo(int bodyUniqueId, struct b3BodyInfo& info) const
 	if (bodyJointsPtr && *bodyJointsPtr)
 	{
 		BodyJointInfoCache2* bodyJoints = *bodyJointsPtr;
-		info.m_baseName = bodyJoints->m_baseName.c_str();
+		strcpy(info.m_baseName,bodyJoints->m_baseName.c_str());
+		strcpy(info.m_bodyName ,bodyJoints->m_bodyName .c_str());
 		return true;
 	}
 	
@@ -933,6 +1325,14 @@ void PhysicsDirect::setSharedMemoryKey(int key)
 
 void PhysicsDirect::uploadBulletFileToSharedMemory(const char* data, int len)
 {
+	if (len>SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE)
+	{
+		len = SHARED_MEMORY_MAX_STREAM_CHUNK_SIZE;
+	}
+	for (int i=0;i<len;i++)
+	{
+		m_data->m_bulletStreamDataServerToClient[i] = data[i];
+	}
 	//m_data->m_physicsClient->uploadBulletFileToSharedMemory(data,len);
 }
 
@@ -999,6 +1399,14 @@ void PhysicsDirect::getCachedVisualShapeInformation(struct b3VisualShapeInformat
 	visualShapesInfo->m_visualShapeData = visualShapesInfo->m_numVisualShapes ? &m_data->m_cachedVisualShapes[0] : 0;
 }
 
+void PhysicsDirect::getCachedCollisionShapeInformation(struct b3CollisionShapeInformation* collisionShapesInfo)
+{
+	collisionShapesInfo->m_numCollisionShapes = m_data->m_cachedCollisionShapes.size();
+	collisionShapesInfo->m_collisionShapeData = collisionShapesInfo->m_numCollisionShapes ? &m_data->m_cachedCollisionShapes[0] : 0;
+}
+
+
+
 void PhysicsDirect::getCachedVREvents(struct b3VREventsData* vrEventsData)
 {
 	vrEventsData->m_numControllerEvents = m_data->m_cachedVREvents.size();
@@ -1006,8 +1414,113 @@ void PhysicsDirect::getCachedVREvents(struct b3VREventsData* vrEventsData)
 							&m_data->m_cachedVREvents[0] : 0;
 }
 
+void PhysicsDirect::getCachedKeyboardEvents(struct b3KeyboardEventsData* keyboardEventsData)
+{
+	keyboardEventsData->m_numKeyboardEvents = m_data->m_cachedKeyboardEvents.size();
+	keyboardEventsData->m_keyboardEvents = keyboardEventsData->m_numKeyboardEvents?
+		&m_data->m_cachedKeyboardEvents[0] : 0;
+}
+
+void PhysicsDirect::getCachedMouseEvents(struct b3MouseEventsData* mouseEventsData)
+{
+	mouseEventsData->m_numMouseEvents = m_data->m_cachedMouseEvents.size();
+	mouseEventsData->m_mouseEvents = mouseEventsData->m_numMouseEvents?
+		&m_data->m_cachedMouseEvents[0] : 0;
+}
+
+
 void PhysicsDirect::getCachedRaycastHits(struct b3RaycastInformation* raycastHits)
 {
 	raycastHits->m_numRayHits = m_data->m_raycastHits.size();
 	raycastHits->m_rayHits = raycastHits->m_numRayHits? &m_data->m_raycastHits[0] : 0;
+}
+
+void PhysicsDirect::getCachedMassMatrix(int dofCountCheck, double* massMatrix)
+{
+	int sz = dofCountCheck*dofCountCheck;
+	if (sz == m_data->m_cachedMassMatrix.size())
+	{
+		for (int i=0;i<sz;i++)
+		{
+			massMatrix[i] = m_data->m_cachedMassMatrix[i];
+		}
+	}
+}
+
+void PhysicsDirect::setTimeOut(double timeOutInSeconds)
+{
+	m_data->m_timeOutInSeconds = timeOutInSeconds;
+}
+
+double PhysicsDirect::getTimeOut() const
+{
+	return m_data->m_timeOutInSeconds;
+}
+
+bool PhysicsDirect::getCachedUserData(int bodyUniqueId, int linkIndex, int userDataId, struct b3UserDataValue &valueOut) const {
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[bodyUniqueId];
+	if (!bodyJointsPtr || !(*bodyJointsPtr)) {
+		return false;
+	}
+	UserDataCache* userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[linkIndex];
+	if (!userDataCachePtr) 
+	{
+		return false;
+	}
+	SharedMemoryUserData* userDataPtr = (userDataCachePtr)->m_userDataMap[userDataId];
+	if (!userDataPtr) 
+	{
+		return false;
+	}
+	valueOut.m_type = userDataPtr->m_type;
+	valueOut.m_length = userDataPtr->m_bytes.size();
+	valueOut.m_data1 = userDataPtr->m_bytes.size()? &userDataPtr->m_bytes[0] : 0;
+	return true;
+}
+
+int PhysicsDirect::getCachedUserDataId(int bodyUniqueId, int linkIndex, const char *key) const {
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[bodyUniqueId];
+	if (!bodyJointsPtr || !(*bodyJointsPtr)) {
+		return -1;
+	}
+	UserDataCache* userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[linkIndex];
+	if (!userDataCachePtr) {
+		return -1;
+	}
+	int *userDataId = (userDataCachePtr)->m_keyToUserDataIdMap[key];
+	if (!userDataId) {
+		return -1;
+	}
+	return *userDataId;
+}
+
+int PhysicsDirect::getNumUserData(int bodyUniqueId, int linkIndex) const {
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[bodyUniqueId];
+	if (!bodyJointsPtr || !(*bodyJointsPtr)) {
+		return 0;
+	}
+	UserDataCache* userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[linkIndex];
+	if (!userDataCachePtr) {
+		return 0;
+	}
+	return (userDataCachePtr)->m_userDataMap.size();
+}
+
+void PhysicsDirect::getUserDataInfo(int bodyUniqueId, int linkIndex, int userDataIndex, const char **keyOut, int *userDataIdOut) const {
+	BodyJointInfoCache2** bodyJointsPtr = m_data->m_bodyJointMap[bodyUniqueId];
+	if (!bodyJointsPtr || !(*bodyJointsPtr)) {
+		*keyOut = 0;
+		*userDataIdOut = -1;
+		return;
+	}
+	UserDataCache* userDataCachePtr = (*bodyJointsPtr)->m_jointToUserDataMap[linkIndex];
+	if (!userDataCachePtr || userDataIndex >= (userDataCachePtr)->m_userDataMap.size()) 
+	{
+		*keyOut = 0;
+		*userDataIdOut = -1;
+		return;
+	}
+	*userDataIdOut = (userDataCachePtr)->m_userDataMap.getKeyAtIndex(userDataIndex).getUid1();
+	SharedMemoryUserData* userDataPtr = (userDataCachePtr)->m_userDataMap.getAtIndex(userDataIndex);
+	*keyOut = (userDataPtr)->m_key.c_str();
 }

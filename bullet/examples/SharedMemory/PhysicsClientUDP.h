@@ -2,7 +2,7 @@
 #define PHYSICS_CLIENT_UDP_H
 
 #include "PhysicsDirect.h"
-#include "PhysicsServerCommandProcessor.h"
+#include "PhysicsCommandProcessorInterface.h"
 
 class UdpNetworkedPhysicsProcessor : public PhysicsCommandProcessorInterface
 {
@@ -24,12 +24,13 @@ public:
 
 	virtual bool receiveStatus(struct SharedMemoryStatus& serverStatusOut, char* bufferServerToClient, int bufferSizeInBytes);
 
-	virtual void renderScene();
+	virtual void renderScene(int renderFlags);
 
 	virtual void   physicsDebugDraw(int debugDrawFlags);
 
 	virtual void setGuiHelper(struct GUIHelperInterface* guiHelper);
 
+	virtual void setTimeOut(double timeOutInSeconds);
 };
 
 

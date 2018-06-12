@@ -50,10 +50,10 @@ class AllConstraintDemo : public  CommonRigidBodyBase
 	virtual void resetCamera()
 	{
 		float dist = 27;
-		float pitch = 720;
-		float yaw = 30;
+		float pitch = -30;
+		float yaw = 720;
 		float targetPos[3]={2,0,-10};
-		m_guiHelper->resetCamera(dist,pitch,yaw,targetPos[0],targetPos[1],targetPos[2]);
+		m_guiHelper->resetCamera(dist,yaw,pitch,targetPos[0],targetPos[1],targetPos[2]);
 	}
 
 	virtual bool	keyboardCallback(int key, int state);
@@ -356,7 +356,7 @@ void	AllConstraintDemo::initPhysics()
 
 		spSlider6Dof->getTranslationalLimitMotor()->m_enableMotor[0] = true;
 		spSlider6Dof->getTranslationalLimitMotor()->m_targetVelocity[0] = -5.0f;
-		spSlider6Dof->getTranslationalLimitMotor()->m_maxMotorForce[0] = 0.1f;
+		spSlider6Dof->getTranslationalLimitMotor()->m_maxMotorForce[0] = 6.0f;
 
 
 		m_dynamicsWorld->addConstraint(spSlider6Dof);
@@ -431,7 +431,7 @@ void	AllConstraintDemo::initPhysics()
 
 //		pGen6DOF->getTranslationalLimitMotor()->m_enableMotor[0] = true;
 //		pGen6DOF->getTranslationalLimitMotor()->m_targetVelocity[0] = 5.0f;
-//		pGen6DOF->getTranslationalLimitMotor()->m_maxMotorForce[0] = 0.1f;
+//		pGen6DOF->getTranslationalLimitMotor()->m_maxMotorForce[0] = 6.0f;
 
 
 //		pGen6DOF->setAngularLowerLimit(btVector3(0., SIMD_HALF_PI*0.9, 0.));
@@ -662,7 +662,7 @@ void	AllConstraintDemo::initPhysics()
 
 		pGen6Dof->getTranslationalLimitMotor()->m_enableMotor[0] = true;
 		pGen6Dof->getTranslationalLimitMotor()->m_targetVelocity[0] = 5.0f;
-		pGen6Dof->getTranslationalLimitMotor()->m_maxMotorForce[0] = 0.1f;
+		pGen6Dof->getTranslationalLimitMotor()->m_maxMotorForce[0] = 6.0f;
 	}
 #endif
 

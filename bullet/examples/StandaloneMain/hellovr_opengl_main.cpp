@@ -2,6 +2,7 @@
 #ifdef BT_USE_CUSTOM_PROFILER
 #endif
 
+
 //========= Copyright Valve Corporation ============//
 
 #include "../OpenGLWindow/SimpleOpenGL3App.h"
@@ -19,11 +20,20 @@
 #include "BulletCollision/CollisionShapes/btCollisionShape.h"
 #include "BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h"
 
+#ifdef __APPLE__
+#define GL_DO_NOT_WARN_IF_MULTI_GL_VERSION_HEADERS_INCLUDED
+#import <Cocoa/Cocoa.h>
+#endif//__APPLE__
+
+
 #include "LinearMath/btIDebugDraw.h"
 int gSharedMemoryKey = -1;
-int  gDebugDrawFlags = 0;
-bool gDisplayDistortion = false;
-bool gDisableDesktopGL = false;
+static int  gDebugDrawFlags = 0;
+static bool gDisplayDistortion = false;
+static bool gDisableDesktopGL = false;
+
+static int maxNumObjectCapacity = 128 * 1024;
+static int maxShapeCapacityInBytes = 128 * 1024 * 1024;
 
 
 #include <stdio.h>
@@ -31,7 +41,8 @@ bool gDisableDesktopGL = false;
 #include <cstdlib>
 
 #include <openvr.h>
-
+#include "strtools.h"
+#include "compat.h"
 #include "lodepng.h"
 #include "Matrices.h"
 #include "pathtools.h"
@@ -50,6 +61,9 @@ static vr::VRControllerState_t sPrevStates[vr::k_unMaxTrackedDeviceCount] = { 0 
 #endif
 #ifdef _WIN32
 #include <Windows.h>
+#endif
+#ifdef __linux__
+#define APIENTRY
 #endif
 
 void ThreadSleep( unsigned long nMilliseconds )
@@ -134,6 +148,8 @@ public:
 
 	void SetupRenderModelForTrackedDevice( vr::TrackedDeviceIndex_t unTrackedDeviceIndex );
 	CGLRenderModel *FindOrLoadRenderModel( const char *pchRenderModelName );
+
+	SimpleOpenGL3App* getApp() { return m_app;}
 
 private: 
 	bool m_bDebugOpenGL;
@@ -353,7 +369,7 @@ void MyKeyboardCallback(int key, int state)
 		}
 		else
 		{
-			b3ChromeUtilsStopTimingsAndWriteJsonFile();
+			b3ChromeUtilsStopTimingsAndWriteJsonFile("timings");
 		}
 	}
 	if (sExample)
@@ -365,6 +381,58 @@ void MyKeyboardCallback(int key, int state)
 		prevKeyboardCallback(key,state);
 
 }
+
+
+
+
+#include "../SharedMemory/SharedMemoryPublic.h"
+extern bool useShadowMap;
+static bool gEnableVRRenderControllers=true;
+static bool gEnableVRRendering = true;
+static int gUpAxis = 2;
+
+void VRPhysicsServerVisualizerFlagCallback(int flag, bool enable)
+{
+	if (flag == COV_ENABLE_Y_AXIS_UP)
+	{
+		//either Y = up or Z
+		gUpAxis = enable? 1:2;
+	}
+
+    if (flag == COV_ENABLE_SHADOWS)
+    {
+        useShadowMap = enable;
+    }
+    if (flag == COV_ENABLE_GUI)
+    {
+		//there is no regular GUI here, but disable the 
+    }
+	if (flag == COV_ENABLE_VR_RENDER_CONTROLLERS)
+	{
+		gEnableVRRenderControllers = enable;
+	}
+	if (flag == COV_ENABLE_RENDERING)
+	{
+		gEnableVRRendering = enable;
+	}
+
+
+    if (flag == COV_ENABLE_WIREFRAME)
+    {
+		if (enable)
+		{
+			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+			//gDebugDrawFlags |= btIDebugDraw::DBG_DrawWireframe;
+		} else
+		{
+			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL);
+			//gDebugDrawFlags &= ~btIDebugDraw::DBG_DrawWireframe;
+		}
+	}
+
+	
+}
+
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
@@ -412,10 +480,12 @@ bool CMainApplication::BInit()
 		SDL_GL_SetAttribute( SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG );
 
 	*/
-	m_app = new SimpleOpenGL3App("SimpleOpenGL3App",m_nWindowWidth,m_nWindowHeight,true);
+	
+	m_app = new SimpleOpenGL3App("SimpleOpenGL3App",m_nWindowWidth,m_nWindowHeight,true, maxNumObjectCapacity, maxShapeCapacityInBytes);
 
 	
 	sGuiPtr = new OpenGLGuiHelper(m_app,false);
+	sGuiPtr->setVisualizerFlagCallback(VRPhysicsServerVisualizerFlagCallback);
 	sGuiPtr->setVRMode(true);
 
 	//sGuiPtr = new DummyGUIHelper;
@@ -469,14 +539,6 @@ bool CMainApplication::BInit()
 	}
 
 
-	glewExperimental = GL_TRUE;
-	GLenum nGlewError = glewInit();
-	if (nGlewError != GLEW_OK)
-	{
-		printf( "%s - Error initializing GLEW! %s\n", __FUNCTION__, glewGetErrorString( nGlewError ) );
-		return false;
-	}
-	glGetError(); // to clear the error caused deep in GLEW
 
 	if ( SDL_GL_SetSwapInterval( m_bVblank ? 1 : 0 ) < 0 )
 	{
@@ -548,10 +610,10 @@ bool CMainApplication::BInitGL()
 {
 	if( m_bDebugOpenGL )
 	{
-		const GLvoid *userParam=0;
-		glDebugMessageCallback(DebugCallback,  userParam);
-		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		//const GLvoid *userParam=0;
+		//glDebugMessageCallback(DebugCallback,  userParam);
+		//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+		//glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	}
 
 	if( !CreateAllShaders() )
@@ -607,8 +669,8 @@ void CMainApplication::Shutdown()
 	{
 		if (m_glSceneVertBuffer)
 		{
-			glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_FALSE );
-			glDebugMessageCallback(nullptr, nullptr);
+			//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_FALSE );
+			//glDebugMessageCallback(nullptr, nullptr);
 			glDeleteBuffers(1, &m_glSceneVertBuffer);
 			glDeleteBuffers(1, &m_glIDVertBuffer);
 			glDeleteBuffers(1, &m_glIDIndexBuffer);
@@ -657,9 +719,11 @@ void CMainApplication::Shutdown()
 		}
 	}
 
-	sExample->exitPhysics();
-	delete sExample;
-
+	if (sExample)
+	{
+		sExample->exitPhysics();
+		delete sExample;
+	}
 	delete m_app;
 	m_app=0;
 	
@@ -705,8 +769,50 @@ bool CMainApplication::HandleInput()
 		vr::VRControllerState_t state;
 		if( m_pHMD->GetControllerState( unDevice, &state ,sizeof(vr::VRControllerState_t)) )
 		{
+			b3Transform tr;
+			getControllerTransform(unDevice, tr);
+			float pos[3] = { tr.getOrigin()[0], tr.getOrigin()[1], tr.getOrigin()[2] };
+			b3Quaternion born = tr.getRotation();
+			float orn[4] = { born[0], born[1], born[2], born[3] };
+
 			//we need to have the 'move' events, so no early out here
 			//if (sPrevStates[unDevice].unPacketNum != state.unPacketNum)
+			if( m_pHMD->GetTrackedDeviceClass( unDevice) == vr::TrackedDeviceClass_HMD )
+			{
+				Matrix4 rotYtoZ = rotYtoZ.identity();
+				//some Bullet apps (especially robotics related) require Z as up-axis)
+				if (m_app->getUpAxis()==2)
+				{
+					rotYtoZ.rotateX(-90);
+				}
+				Matrix4 viewMatCenter = m_mat4HMDPose * rotYtoZ;
+				const float* mat = viewMatCenter.invertAffine().get();
+				pos[0] = mat[12];
+				pos[1] = mat[13];
+				pos[2] = mat[14];
+
+				b3Matrix3x3 bmat;
+				for (int i=0;i<3;i++)
+				{
+					for (int j=0;j<3;j++)
+					{
+						bmat[i][j] = mat[i+4*j];
+					}
+				}
+				b3Quaternion orn2;
+				bmat.getRotation(orn2);
+				orn[0] = orn2[0];
+				orn[1] = orn2[1];
+				orn[2] = orn2[2];
+				orn[3] = orn2[3];
+				sExample->vrHMDMoveCallback(unDevice, pos,orn);
+			}
+
+			if( m_pHMD->GetTrackedDeviceClass( unDevice) == vr::TrackedDeviceClass_GenericTracker )
+			{
+				sExample->vrGenericTrackerMoveCallback(unDevice, pos,orn);
+			}
+
 			if( m_pHMD->GetTrackedDeviceClass( unDevice) == vr::TrackedDeviceClass_Controller )
 			{
 				sPrevStates[unDevice].unPacketNum = state.unPacketNum;
@@ -714,45 +820,33 @@ bool CMainApplication::HandleInput()
 				for (int button = 0; button < vr::k_EButton_Max; button++)
 				{
 					uint64_t trigger = vr::ButtonMaskFromId((vr::EVRButtonId)button);
-
+					
+					btAssert(vr::k_unControllerStateAxisCount>=5);
+					float allAxis[10];//store x,y times 5 controllers
+					int index=0;
+					for (int i=0;i<5;i++)
+					{
+						allAxis[index++]=state.rAxis[i].x;
+						allAxis[index++]=state.rAxis[i].y;
+					}
 					bool isTrigger = (state.ulButtonPressed&trigger) != 0;
 					if (isTrigger)
 					{
 
-						b3Transform tr;
-						getControllerTransform(unDevice, tr);
-						float pos[3] = { tr.getOrigin()[0], tr.getOrigin()[1], tr.getOrigin()[2] };
-						b3Quaternion born = tr.getRotation();
-						float orn[4] = { born[0], born[1], born[2], born[3] };
 
 						//pressed now, not pressed before -> raise a button down event
 						if ((sPrevStates[unDevice].ulButtonPressed&trigger)==0)
 						{
 //							printf("Device PRESSED: %d, button %d\n", unDevice, button);
-							if (button==2)
-							{
-								//glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-								///todo(erwincoumans) can't use reguar debug drawer, because physics/graphics are not in sync
-								///so it can (and likely will) cause crashes
-								///add a special debug drawer that deals with this
-									//gDebugDrawFlags = btIDebugDraw::DBG_DrawWireframe+btIDebugDraw::DBG_DrawContactPoints+
-									//btIDebugDraw::DBG_DrawConstraintLimits+
-									//btIDebugDraw::DBG_DrawConstraints
-									//;
-								//gDebugDrawFlags = btIDebugDraw::DBG_DrawFrames;
-									
-
-
-							}
-
 							sExample->vrControllerButtonCallback(unDevice, button, 1, pos, orn);
 
 						}
 						else
 						{
 							
+							
 //							printf("Device MOVED: %d\n", unDevice);
-							sExample->vrControllerMoveCallback(unDevice, pos, orn, state.rAxis[1].x);
+							sExample->vrControllerMoveCallback(unDevice, pos, orn, state.rAxis[1].x, allAxis);
 						}
 					}
 					else
@@ -761,11 +855,6 @@ bool CMainApplication::HandleInput()
 						{
 							
 
-							b3Transform tr;
-							getControllerTransform(unDevice, tr);
-							float pos[3] = { tr.getOrigin()[0], tr.getOrigin()[1], tr.getOrigin()[2] };
-							b3Quaternion born = tr.getRotation();
-							float orn[4] = { born[0], born[1], born[2], born[3] };
 	//							printf("Device RELEASED: %d, button %d\n", unDevice,button);
 					
 							//not pressed now, but pressed before -> raise a button up event
@@ -774,14 +863,13 @@ bool CMainApplication::HandleInput()
 								if (button==2)
 								{
 									gDebugDrawFlags = 0;
-									glPolygonMode( GL_FRONT_AND_BACK, GL_FILL);
 								}
 							
 								sExample->vrControllerButtonCallback(unDevice, button, 0, pos, orn);
 							} else
 							{
 
-								sExample->vrControllerMoveCallback(unDevice, pos, orn, state.rAxis[1].x);
+								sExample->vrControllerMoveCallback(unDevice, pos, orn, state.rAxis[1].x,allAxis);
 							}
 						}
 					}
@@ -806,14 +894,20 @@ void CMainApplication::RunMainLoop()
 
 	while ( !bQuit && !m_app->m_window->requestedExit())
 	{
+		this->m_app->setUpAxis(gUpAxis);
 		b3ChromeUtilsEnableProfiling();
+		if (gEnableVRRendering)
 		{
-		B3_PROFILE("main");
+			B3_PROFILE("main");
 
-		bQuit = HandleInput();
+			bQuit = HandleInput();
 
-		RenderFrame();
-	}
+			RenderFrame();
+		} else
+		{
+			b3Clock::usleep(0);
+			sExample->updateGraphics();
+		}
 	}
 
 }
@@ -918,7 +1012,7 @@ void CMainApplication::RenderFrame()
 		// We want to make sure the glFinish waits for the entire present to complete, not just the submission
 		// of the command. So, we do a clear here right here so the glFinish will wait fully for the swap.
 		glClearColor( 0, 0, 0, 1 );
-		glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+		//glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 	}
 
 	// Flush and wait for swap.
@@ -1191,9 +1285,8 @@ bool CMainApplication::SetupTexturemaps()
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
 
 	GLfloat fLargest;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest);
-	 	
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &fLargest);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, fLargest);
 	glBindTexture( GL_TEXTURE_2D, 0 );
 
 	return ( m_iTexture != 0 );
@@ -1343,6 +1436,8 @@ extern int gGraspingController;
 
 void CMainApplication::DrawControllers()
 {
+
+	
 	// don't draw controllers if somebody else has input focus
 	if( m_pHMD->IsInputFocusCapturedByAnotherProcess() )
 		return;
@@ -1711,16 +1806,16 @@ void CMainApplication::RenderStereoTargets()
 		m_app->m_instancingRenderer->getActiveCamera()->setCameraUpVector(mat[0],mat[1],mat[2]);
 		m_app->m_instancingRenderer->getActiveCamera()->setVRCamera(viewMatLeft.get(),m_mat4ProjectionLeft.get());
 		m_app->m_instancingRenderer->updateCamera(m_app->getUpAxis());
+		m_app->m_instancingRenderer->getActiveCamera()->setVRCamera(viewMatLeft.get(),m_mat4ProjectionLeft.get());
+
 	}
 
 	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	
-	
-	
 
 	m_app->m_window->startRendering();
-	
+        glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
+
 
 	RenderScene( vr::Eye_Left );
 
@@ -1769,12 +1864,13 @@ void CMainApplication::RenderStereoTargets()
 		Matrix4 viewMatRight = m_mat4eyePosRight * m_mat4HMDPose * rotYtoZ;
 		m_app->m_instancingRenderer->getActiveCamera()->setVRCamera(viewMatRight.get(),m_mat4ProjectionRight.get());
 		m_app->m_instancingRenderer->updateCamera(m_app->getUpAxis());
+		m_app->m_instancingRenderer->getActiveCamera()->setVRCamera(viewMatRight.get(),m_mat4ProjectionRight.get());
 	}
 	
 	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	
 	m_app->m_window->startRendering();
+        glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
 	
 	RenderScene( vr::Eye_Right );
 	
@@ -1815,7 +1911,7 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 {
 	B3_PROFILE("RenderScene");
 
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glEnable(GL_DEPTH_TEST);
 
 	if( m_bShowCubes )
@@ -1830,39 +1926,42 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 
 	bool bIsInputCapturedByAnotherProcess = m_pHMD->IsInputFocusCapturedByAnotherProcess();
 
-	if( !bIsInputCapturedByAnotherProcess )
+	if (gEnableVRRenderControllers)
 	{
-		// draw the controller axis lines
-		glUseProgram( m_unControllerTransformProgramID );
-		glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
-		glBindVertexArray( m_unControllerVAO );
-		glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
-		glBindVertexArray( 0 );
+		if( !bIsInputCapturedByAnotherProcess )
+		{
+			// draw the controller axis lines
+			glUseProgram( m_unControllerTransformProgramID );
+			glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
+			glBindVertexArray( m_unControllerVAO );
+			glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
+			glBindVertexArray( 0 );
+		}
+
+		// ----- Render Model rendering -----
+		glUseProgram( m_unRenderModelProgramID );
+
+		for( uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
+		{
+			if( !m_rTrackedDeviceToRenderModel[ unTrackedDevice ] || !m_rbShowTrackedDevice[ unTrackedDevice ] )
+				continue;
+
+			const vr::TrackedDevicePose_t & pose = m_rTrackedDevicePose[ unTrackedDevice ];
+			if( !pose.bPoseIsValid )
+				continue;
+
+			if( bIsInputCapturedByAnotherProcess && m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) == vr::TrackedDeviceClass_Controller )
+				continue;
+
+			const Matrix4 & matDeviceToTracking = m_rmat4DevicePose[ unTrackedDevice ];
+			Matrix4 matMVP = GetCurrentViewProjectionMatrix( nEye ) * matDeviceToTracking;
+			glUniformMatrix4fv( m_nRenderModelMatrixLocation, 1, GL_FALSE, matMVP.get() );
+
+			m_rTrackedDeviceToRenderModel[ unTrackedDevice ]->Draw();
+		}
 	}
-
-	// ----- Render Model rendering -----
-	glUseProgram( m_unRenderModelProgramID );
-
-	for( uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
-	{
-		if( !m_rTrackedDeviceToRenderModel[ unTrackedDevice ] || !m_rbShowTrackedDevice[ unTrackedDevice ] )
-			continue;
-
-		const vr::TrackedDevicePose_t & pose = m_rTrackedDevicePose[ unTrackedDevice ];
-		if( !pose.bPoseIsValid )
-			continue;
-
-		if( bIsInputCapturedByAnotherProcess && m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) == vr::TrackedDeviceClass_Controller )
-			continue;
-
-		const Matrix4 & matDeviceToTracking = m_rmat4DevicePose[ unTrackedDevice ];
-		Matrix4 matMVP = GetCurrentViewProjectionMatrix( nEye ) * matDeviceToTracking;
-		glUniformMatrix4fv( m_nRenderModelMatrixLocation, 1, GL_FALSE, matMVP.get() );
-
-		m_rTrackedDeviceToRenderModel[ unTrackedDevice ]->Draw();
-	}
-
-	glUseProgram( 0 );
+		glUseProgram( 0 );
+	
 }
 
 
@@ -1987,6 +2086,7 @@ void CMainApplication::UpdateHMDMatrixPose()
 					case vr::TrackedDeviceClass_HMD:               m_rDevClassChar[nDevice] = 'H'; break;
 					case vr::TrackedDeviceClass_Invalid:           m_rDevClassChar[nDevice] = 'I'; break;
 					case vr::TrackedDeviceClass_TrackingReference: m_rDevClassChar[nDevice] = 'T'; break;
+                                        case vr::TrackedDeviceClass_GenericTracker:    m_rDevClassChar[nDevice] = 'G'; break;
 					default:                                       m_rDevClassChar[nDevice] = '?'; break;
 					}
 				}
@@ -2197,11 +2297,9 @@ bool CGLRenderModel::BInit( const vr::RenderModel_t & vrModel, const vr::RenderM
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-
 	GLfloat fLargest;
-	glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest );
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest );
-
+	glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY, &fLargest );
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, fLargest );
 	glBindTexture( GL_TEXTURE_2D, 0 );
 
 	m_unVertexCount = vrModel.unTriangleCount * 3;
@@ -2260,6 +2358,9 @@ int main(int argc, char *argv[])
 		b3ChromeUtilsEnableProfiling();
 	}
 
+	args.GetCmdLineArgument("max_num_object_capacity", maxNumObjectCapacity);
+	args.GetCmdLineArgument("max_shape_capacity_in_bytes", maxShapeCapacityInBytes);
+	args.GetCmdLineArgument("shared_memory_key", gSharedMemoryKey);
 
 #ifdef BT_USE_CUSTOM_PROFILER
 	b3SetCustomEnterProfileZoneFunc(dcEnter);
@@ -2287,6 +2388,13 @@ int main(int argc, char *argv[])
 
 	}
 
+	char* gVideoFileName = 0;
+    args.GetCmdLineArgument("mp4",gVideoFileName);
+    if (gVideoFileName)
+        pMainApplication->getApp()->dumpFramesToVideo(gVideoFileName);
+
+#ifndef B3_USE_GLFW
+#ifdef _WIN32 
 	//request disable VSYNC
 	typedef bool (APIENTRY *PFNWGLSWAPINTERVALFARPROC)(int);
 	PFNWGLSWAPINTERVALFARPROC wglSwapIntervalEXT = 0;
@@ -2294,14 +2402,21 @@ int main(int argc, char *argv[])
 		(PFNWGLSWAPINTERVALFARPROC)wglGetProcAddress("wglSwapIntervalEXT");
 	if (wglSwapIntervalEXT)
 		wglSwapIntervalEXT(0);
-			
+#endif
+#endif
+#ifdef __APPLE__
+	GLint                       sync = 0;
+	CGLContextObj               ctx = CGLGetCurrentContext();
+	CGLSetParameter(ctx, kCGLCPSwapInterval, &sync);
+#endif
+		
 	pMainApplication->RunMainLoop();
 
 	pMainApplication->Shutdown();
 
 	if (args.CheckCmdLineFlag("tracing"))
 	{
-		b3ChromeUtilsStopTimingsAndWriteJsonFile();
+		b3ChromeUtilsStopTimingsAndWriteJsonFile("timings");
 	}
 
 

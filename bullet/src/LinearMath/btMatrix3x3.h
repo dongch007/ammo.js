@@ -289,7 +289,7 @@ public:
 	/** @brief Set the matrix from euler angles YPR around ZYX axes
 	* @param eulerX Roll about X axis
 	* @param eulerY Pitch around Y axis
-	* @param eulerZ Yaw aboud Z axis
+	* @param eulerZ Yaw about Z axis
 	* 
 	* These angles are used to produce a rotation matrix. The euler
 	* angles are applied in ZYX order. I.e a vector is first rotated 
@@ -514,7 +514,7 @@ public:
 
 
 	/**@brief Get the matrix represented as euler angles around ZYX
-	* @param yaw Yaw around X axis
+	* @param yaw Yaw around Z axis
 	* @param pitch Pitch around Y axis
 	* @param roll around X axis 
 	* @param solution_number Which solution of two possible solutions ( 1 or 2) are possible values*/	
@@ -647,15 +647,45 @@ public:
 		return m_el[0].z() * v.x() + m_el[1].z() * v.y() + m_el[2].z() * v.z();
 	}
 
+	///extractRotation is from "A robust method to extract the rotational part of deformations"
+	///See http://dl.acm.org/citation.cfm?doid=2994258.2994269
+	///decomposes a matrix A in a orthogonal matrix R and a
+	///symmetric matrix S:
+	///A = R*S.
+	///note that R can include both rotation and scaling.
+	SIMD_FORCE_INLINE void extractRotation(btQuaternion &q,btScalar tolerance = 1.0e-9, int maxIter=100)
+	{
+		int iter =0;
+		btScalar w;
+		const btMatrix3x3& A=*this;
+		for(iter = 0; iter < maxIter; iter++)
+		{
+			btMatrix3x3 R(q);
+			btVector3 omega = (R.getColumn(0).cross(A.getColumn(0)) + R.getColumn(1).cross(A.getColumn(1)) 
+				+ R.getColumn(2).cross(A.getColumn(2))
+				) * (btScalar(1.0) / btFabs(R.getColumn(0).dot(A.getColumn(0)) + R.getColumn
+				(1).dot(A.getColumn(1)) + R.getColumn(2).dot(A.getColumn(2))) +
+					tolerance);
+			w = omega.norm();
+			if(w < tolerance)
+				break;
+			q = btQuaternion(btVector3((btScalar(1.0) / w) * omega),w) *
+				q;
+			q.normalize();
+		}
+	}
+
+
+
 
 	/**@brief diagonalizes this matrix by the Jacobi method.
 	* @param rot stores the rotation from the coordinate system in which the matrix is diagonal to the original
-	* coordinate system, i.e., old_this = rot * new_this * rot^T. 
+	* coordinate system, i.e., old_this = rot * new_this * rot^T.
 	* @param threshold See iteration
-	* @param iteration The iteration stops when all off-diagonal elements are less than the threshold multiplied 
-	* by the sum of the absolute values of the diagonal, or when maxSteps have been executed. 
-	* 
-	* Note that this matrix is assumed to be symmetric. 
+	* @param iteration The iteration stops when all off-diagonal elements are less than the threshold multiplied
+	* by the sum of the absolute values of the diagonal, or when maxSteps have been executed.
+	*
+	* Note that this matrix is assumed to be symmetric.
 	*/
 	void diagonalize(btMatrix3x3& rot, btScalar threshold, int maxSteps)
 	{
@@ -734,7 +764,6 @@ public:
 			}
 		}
 	}
-
 
 
 

@@ -332,10 +332,10 @@ struct MultiBodyInplaceSolverIslandCallback : public btSimulationIslandManager::
 				}
 			}
 
-			if (m_solverInfo->m_minimumSolverBatchSize<=1)
-			{
-				m_solver->solveGroup( bodies,numBodies,manifolds, numManifolds,startConstraint,numCurConstraints,*m_solverInfo,m_debugDrawer,m_dispatcher);
-			} else
+			//if (m_solverInfo->m_minimumSolverBatchSize<=1)
+			//{
+			//	m_solver->solveGroup( bodies,numBodies,manifolds, numManifolds,startConstraint,numCurConstraints,*m_solverInfo,m_debugDrawer,m_dispatcher);
+			//} else
 			{
 				
 				for (i=0;i<numBodies;i++)
@@ -411,6 +411,8 @@ void	btMultiBodyDynamicsWorld::solveConstraints(btContactSolverInfo& solverInfo)
 
 	BT_PROFILE("solveConstraints");
 	
+	clearMultiBodyConstraintForces();
+
 	m_sortedConstraints.resize( m_constraints.size());
 	int i; 
 	for (i=0;i<getNumConstraints();i++)
@@ -669,7 +671,7 @@ void	btMultiBodyDynamicsWorld::solveConstraints(btContactSolverInfo& solverInfo)
 		}
 	}
 
-	clearMultiBodyConstraintForces();
+	
 
 	m_solverMultiBodyIslandCallback->processConstraints();
 	
@@ -798,6 +800,8 @@ void	btMultiBodyDynamicsWorld::debugDrawWorld()
 {
 	BT_PROFILE("btMultiBodyDynamicsWorld debugDrawWorld");
 
+	btDiscreteDynamicsWorld::debugDrawWorld();
+
 	bool drawConstraints = false;
 	if (getDebugDrawer())
 	{
@@ -822,21 +826,24 @@ void	btMultiBodyDynamicsWorld::debugDrawWorld()
 			{
 				btMultiBody* bod = m_multiBodies[b];
 				bod->forwardKinematics(m_scratch_world_to_local1,m_scratch_local_origin1);
-				
-				getDebugDrawer()->drawTransform(bod->getBaseWorldTransform(), 0.1);
-
+		
+				if (mode  & btIDebugDraw::DBG_DrawFrames)
+				{
+					getDebugDrawer()->drawTransform(bod->getBaseWorldTransform(), 0.1);
+				}
 
 				for (int m = 0; m<bod->getNumLinks(); m++)
 				{
 					
 					const btTransform& tr = bod->getLink(m).m_cachedWorldTransform;
-
-					getDebugDrawer()->drawTransform(tr, 0.1);
-
+					if (mode  & btIDebugDraw::DBG_DrawFrames)
+					{
+						getDebugDrawer()->drawTransform(tr, 0.1);
+					}
 						//draw the joint axis
 					if (bod->getLink(m).m_jointType==btMultibodyLink::eRevolute)
 					{
-						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_topVec);
+						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_topVec)*0.1;
 					
 						btVector4 color(0,0,0,1);//1,1,1);
 						btVector3 from = vec+tr.getOrigin()-quatRotate(tr.getRotation(),bod->getLink(m).m_dVector);
@@ -845,7 +852,7 @@ void	btMultiBodyDynamicsWorld::debugDrawWorld()
 					}
 					if (bod->getLink(m).m_jointType==btMultibodyLink::eFixed)
 					{
-						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_bottomVec);
+						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_bottomVec)*0.1;
 					
 						btVector4 color(0,0,0,1);//1,1,1);
 						btVector3 from = vec+tr.getOrigin()-quatRotate(tr.getRotation(),bod->getLink(m).m_dVector);
@@ -854,7 +861,7 @@ void	btMultiBodyDynamicsWorld::debugDrawWorld()
 					}
 					if (bod->getLink(m).m_jointType==btMultibodyLink::ePrismatic)
 					{
-						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_bottomVec);
+						btVector3 vec = quatRotate(tr.getRotation(),bod->getLink(m).m_axes[0].m_bottomVec)*0.1;
 					
 						btVector4 color(0,0,0,1);//1,1,1);
 						btVector3 from = vec+tr.getOrigin()-quatRotate(tr.getRotation(),bod->getLink(m).m_dVector);
@@ -867,7 +874,7 @@ void	btMultiBodyDynamicsWorld::debugDrawWorld()
 		}
 	}
 
-	btDiscreteDynamicsWorld::debugDrawWorld();
+	
 }
 
 
@@ -917,7 +924,7 @@ void btMultiBodyDynamicsWorld::clearMultiBodyConstraintForces()
 void btMultiBodyDynamicsWorld::clearMultiBodyForces()
 {
               {
-                BT_PROFILE("clearMultiBodyForces");
+               // BT_PROFILE("clearMultiBodyForces");
                 for (int i=0;i<this->m_multiBodies.size();i++)
                 {
                         btMultiBody* bod = m_multiBodies[i];
@@ -968,6 +975,8 @@ void	btMultiBodyDynamicsWorld::serialize(btSerializer* serializer)
 
 	serializeCollisionObjects(serializer);
 
+	serializeContactManifolds(serializer);
+
 	serializer->finishSerialization();
 }
 
@@ -983,6 +992,19 @@ void	btMultiBodyDynamicsWorld::serializeMultiBodies(btSerializer* serializer)
 			btChunk* chunk = serializer->allocate(len,1);
 			const char* structType = mb->serialize(chunk->m_oldPtr, serializer);
 			serializer->finalizeChunk(chunk,structType,BT_MULTIBODY_CODE,mb);
+		}
+	}
+
+	//serialize all multibody links (collision objects)
+	for (i=0;i<m_collisionObjects.size();i++)
+	{
+		btCollisionObject* colObj = m_collisionObjects[i];
+		if (colObj->getInternalType() == btCollisionObject::CO_FEATHERSTONE_LINK)
+		{
+			int len = colObj->calculateSerializeBufferSize();
+			btChunk* chunk = serializer->allocate(len,1);
+			const char* structType = colObj->serialize(chunk->m_oldPtr, serializer);
+			serializer->finalizeChunk(chunk,structType,BT_MB_LINKCOLLIDER_CODE,colObj);
 		}
 	}
 

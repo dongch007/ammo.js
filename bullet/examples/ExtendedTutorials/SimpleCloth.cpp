@@ -61,10 +61,10 @@ struct SimpleClothExample : public CommonRigidBodyBase
 	void resetCamera()
 	{
 		float dist = 41;
-		float pitch = 52;
-		float yaw = 35;
+		float pitch = -35;
+		float yaw = 52;
 		float targetPos[3]={0,0.46,0};
-		m_guiHelper->resetCamera(dist,pitch,yaw,targetPos[0],targetPos[1],targetPos[2]);
+		m_guiHelper->resetCamera(dist,yaw,pitch,targetPos[0],targetPos[1],targetPos[2]);
 	}
 
 	void createSoftBody(const btScalar size, const int num_x, const int num_z, const int fixed=1+2);
@@ -121,6 +121,7 @@ void SimpleClothExample::createSoftBody(const btScalar s,
 		fixed,true);
 	
 	cloth->getCollisionShape()->setMargin(0.001f);
+  cloth->getCollisionShape()->setUserPointer((void*)cloth);
 	cloth->generateBendingConstraints(2,cloth->appendMaterial());
 	cloth->setTotalMass(10); 
 	//cloth->m_cfg.citerations = 10;

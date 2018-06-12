@@ -3,7 +3,8 @@
 #include <fstream>
 #include <sstream>
 #include "model.h"
-
+#include "Bullet3Common/b3Logging.h"
+#include <string.h> // memcpy
 Model::Model(const char *filename) : verts_(), faces_(), norms_(), uv_(), diffusemap_(), normalmap_(), specularmap_() {
     std::ifstream in;
     in.open (filename, std::ifstream::in);
@@ -51,24 +52,22 @@ Model::Model():verts_(), faces_(), norms_(), uv_(), diffusemap_(), normalmap_(),
 
 void Model::setDiffuseTextureFromData(unsigned char* textureImage,int textureWidth,int textureHeight)
 {
-	diffusemap_ = TGAImage(textureWidth, textureHeight, TGAImage::RGB);
-	for (int i=0;i<textureWidth;i++)
 	{
-		for (int j=0;j<textureHeight;j++)
-		{
-			TGAColor color;
-            color.bgra[0] = textureImage[(i+j*textureWidth)*3+0];
-            color.bgra[1] = textureImage[(i+j*textureWidth)*3+1];
-            color.bgra[2] = textureImage[(i+j*textureWidth)*3+2];
-			color.bgra[3] = 255;
-
-			color.bytespp = 3;
-			diffusemap_.set(i,j,color);
-			
-		}
+		B3_PROFILE("new TGAImage");
+		diffusemap_ = TGAImage(textureWidth, textureHeight, TGAImage::RGB);
 	}
-	
-	diffusemap_.flip_vertically();
+	TGAColor color;
+	color.bgra[3] = 255;
+
+	color.bytespp = 3;
+	{
+		B3_PROFILE("copy texels");
+		memcpy(diffusemap_.buffer(), textureImage, textureHeight*textureWidth * 3);
+	}
+	{
+		B3_PROFILE("flip_vertically");
+		diffusemap_.flip_vertically();
+	}
 }
 
 void Model::loadDiffuseTexture(const char* relativeFileName)
@@ -140,6 +139,13 @@ void Model::load_texture(std::string filename, const char *suffix, TGAImage &img
 TGAColor Model::diffuse(Vec2f uvf) {
     if (diffusemap_.get_width() && diffusemap_.get_height())
     {
+		double val;
+//		bool repeat = true;
+//		if (repeat)
+		{
+			uvf[0] = modf(uvf[0],&val);
+			uvf[1] = modf(uvf[1],&val);
+		}
         Vec2i uv(uvf[0]*diffusemap_.get_width(), uvf[1]*diffusemap_.get_height());
         return diffusemap_.get(uv[0], uv[1]);
     }
@@ -160,8 +166,12 @@ Vec2f Model::uv(int iface, int nthvert) {
 }
 
 float Model::specular(Vec2f uvf) {
-    Vec2i uv(uvf[0]*specularmap_.get_width(), uvf[1]*specularmap_.get_height());
-    return specularmap_.get(uv[0], uv[1])[0]/1.f;
+	if (specularmap_.get_width() && specularmap_.get_height())
+	{
+		Vec2i uv(uvf[0]*specularmap_.get_width(), uvf[1]*specularmap_.get_height());
+		return specularmap_.get(uv[0], uv[1])[0]/1.f;
+	}
+	return 2.0;
 }
 
 Vec3f Model::normal(int iface, int nthvert) {

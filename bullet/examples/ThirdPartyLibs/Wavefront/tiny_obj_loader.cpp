@@ -218,8 +218,18 @@ updateVertex(
   }
 
   if (i.vt_idx >= 0) {
-    texcoords.push_back(in_texcoords[2*i.vt_idx+0]);
-    texcoords.push_back(in_texcoords[2*i.vt_idx+1]);
+	int numTexCoords = in_texcoords.size();
+	int index0 = 2*i.vt_idx+0;
+	int index1 = 2*i.vt_idx+1;
+
+	if (index0>=0 && (index0)<numTexCoords)
+	{
+		texcoords.push_back(in_texcoords[index0]);
+	}
+	if (index1>=0 && (index1)<numTexCoords)
+	{
+		texcoords.push_back(in_texcoords[index1]);
+	}
   }
 
   unsigned int idx = positions.size() / 3 - 1;
@@ -318,6 +328,7 @@ void InitMaterial(material_t& material) {
     material.emission[i] = 0.f;
   }
   material.shininess = 1.f;
+  material.transparency = 1.f;
 }
 
 std::string LoadMtl (
@@ -455,6 +466,20 @@ std::string LoadMtl (
       continue;
     }
 
+	// transparency
+	if (token[0] == 'T' && token[1] == 'r' && isSpace(token[2])) {
+		token += 2;
+		material.transparency = parseFloat(token);
+		continue;
+	}
+
+	// transparency
+	if (token[0] == 'd' && isSpace(token[1])) {
+		token += 1;
+		material.transparency = parseFloat(token);
+		continue;
+	}
+
     // ambient texture
     if ((0 == strncmp(token, "map_Ka", 6)) && isSpace(token[6])) {
       token += 7;
@@ -507,6 +532,16 @@ LoadObj(
   const char* filename,
   const char* mtl_basepath)
 {
+  std::string tmp = filename;
+  if (!mtl_basepath) {
+    int last_slash = 0;
+    for (int c=0; c<(int)tmp.size(); ++c)
+      if (tmp[c]=='/' || tmp[c]=='\\')
+        last_slash = c;
+    tmp = tmp.substr(0, last_slash);
+    mtl_basepath = tmp.c_str();
+    //fprintf(stderr, "MTL PATH '%s' orig '%s'\n", mtl_basepath, filename);
+  }
 
   shapes.resize(0);
   std::vector<vertex_index> allIndices;
@@ -536,12 +571,16 @@ LoadObj(
   // material
   std::map<std::string, material_t> material_map;
   material_t material;
+  InitMaterial(material);
 
   int maxchars = 8192;  // Alloc enough size.
   std::vector<char> buf(maxchars);  // Alloc enough size.
+  std::string linebuf;
+  linebuf.reserve(maxchars);
+
   while (ifs.peek() != -1) {
 
-    std::string linebuf;
+	linebuf.resize(0);
     safeGetline(ifs,linebuf);
 
     // Trim newline '\r\n' or '\r'

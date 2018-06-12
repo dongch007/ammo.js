@@ -3,7 +3,11 @@ project "App_BulletExampleBrowser"
         language "C++"
 
         kind "ConsoleApp"
-
+        
+        if os.is("Linux") then
+	        buildoptions{"-fPIC"}
+	    end
+        
         hasCL = findOpenCL("clew")
 
         if (hasCL) then
@@ -17,6 +21,7 @@ project "App_BulletExampleBrowser"
         includedirs {
                 ".",
                 "../../src",
+		"../../examples/SharedMemory",
                 "../ThirdPartyLibs",
                 }
 
@@ -35,6 +40,28 @@ project "App_BulletExampleBrowser"
                         }
                 end
 
+	if _OPTIONS["audio"] then
+			files {"../TinyAudio/*.cpp"}
+			defines {"B3_ENABLE_TINY_AUDIO"}
+			
+			if os.is("Windows") then
+				links {"winmm","Wsock32","dsound"}
+				defines {"WIN32","__WINDOWS_MM__","__WINDOWS_DS__"}
+			end
+			
+			if os.is("Linux") then initX11() 
+			                defines  {"__OS_LINUX__","__LINUX_ALSA__"}
+				links {"asound","pthread"}
+			end
+
+
+			if os.is("MacOSX") then
+				links{"Cocoa.framework"}
+				links{"CoreAudio.framework", "coreMIDI.framework", "Cocoa.framework"}
+				defines {"__OS_MACOSX__","__MACOSX_CORE__"}
+			end
+		end
+					
     if _OPTIONS["lua"] then
                 includedirs{"../ThirdPartyLibs/lua-5.2.3/src"}
                 links {"lua-5.2.3"}
@@ -59,6 +86,7 @@ project "App_BulletExampleBrowser"
 		"../SharedMemory/PhysicsClientC_API.cpp",
 		"../SharedMemory/PhysicsClientC_API.h",
 		"../SharedMemory/PhysicsServerExample.cpp",
+		"../SharedMemory/PhysicsServerExampleBullet2.cpp",
 		"../SharedMemory/PhysicsClientExample.cpp",
 		"../SharedMemory/PhysicsServer.cpp",
 		"../SharedMemory/PhysicsServerSharedMemory.cpp",
@@ -86,17 +114,30 @@ project "App_BulletExampleBrowser"
 		"../SharedMemory/PhysicsLoopBackC_API.h",
 		"../SharedMemory/PhysicsServerCommandProcessor.cpp",
 		"../SharedMemory/PhysicsServerCommandProcessor.h",
-		"../SharedMemory/TinyRendererVisualShapeConverter.cpp",
-		"../SharedMemory/TinyRendererVisualShapeConverter.h",
+		"../SharedMemory/b3PluginManager.cpp",		
+		"../SharedMemory/plugins/tinyRendererPlugin/TinyRendererVisualShapeConverter.cpp",
+		"../SharedMemory/plugins/tinyRendererPlugin/tinyRendererPlugin.cpp",
+		"../SharedMemory/plugins/pdControlPlugin/pdControlPlugin.cpp",
+		"../SharedMemory/plugins/pdControlPlugin/pdControlPlugin.h",
+		"../SharedMemory/SharedMemoryCommands.h",
+		"../SharedMemory/SharedMemoryPublic.h",
+		"../SharedMemory/b3RobotSimulatorClientAPI_NoGUI.cpp",
+		"../SharedMemory/b3RobotSimulatorClientAPI_NoGUI.h",		
+		"../SharedMemory/b3RobotSimulatorClientAPI_NoDirect.cpp",
+		"../SharedMemory/b3RobotSimulatorClientAPI_NoDirect.h",		
 		"../MultiThreading/MultiThreadingExample.cpp",
 		"../MultiThreading/b3PosixThreadSupport.cpp",
 		"../MultiThreading/b3Win32ThreadSupport.cpp",
 		"../MultiThreading/b3ThreadSupportInterface.cpp",
 		"../InverseDynamics/InverseDynamicsExample.cpp",
 		"../InverseDynamics/InverseDynamicsExample.h",
+		"../RobotSimulator/b3RobotSimulatorClientAPI.cpp",
+		"../RobotSimulator/b3RobotSimulatorClientAPI.h",		
 		"../BasicDemo/BasicExample.*",
 		"../Tutorial/*",
 		"../ExtendedTutorials/*",
+		"../Utils/RobotLoggingUtil.cpp",
+		"../Utils/RobotLoggingUtil.h",
 		"../Evolution/NN3DWalkers.cpp",
 		"../Evolution/NN3DWalkers.h",
 		"../Collision/*",
@@ -128,14 +169,11 @@ project "App_BulletExampleBrowser"
 		"../RigidBody/RigidBodySoftContact.cpp",
 		"../ThirdPartyLibs/stb_image/*",
 		"../ThirdPartyLibs/Wavefront/tiny_obj_loader.*",
-		"../ThirdPartyLibs/tinyxml/*",
 		"../ThirdPartyLibs/BussIK/*",
 		"../GyroscopicDemo/GyroscopicSetup.cpp",
 		"../GyroscopicDemo/GyroscopicSetup.h",
-        "../ThirdPartyLibs/tinyxml/tinystr.cpp",
-        "../ThirdPartyLibs/tinyxml/tinyxml.cpp",
-        "../ThirdPartyLibs/tinyxml/tinyxmlerror.cpp",
-        "../ThirdPartyLibs/tinyxml/tinyxmlparser.cpp",
+    "../ThirdPartyLibs/tinyxml2/tinyxml2.cpp",
+    "../ThirdPartyLibs/tinyxml2/tinyxml2.h",
         }
 if (hasCL and findOpenGL3()) then
 			files {
@@ -145,6 +183,11 @@ if (hasCL and findOpenGL3()) then
 				"../OpenCL/rigidbody/GpuRigidBodyDemo.cpp",
 			}
 		end
+		
+if (_OPTIONS["enable_static_vr_plugin"]) then
+		files {"../../examples/SharedMemory/plugins/vrSyncPlugin/vrSyncPlugin.cpp"}
+end
+
 if os.is("Linux") then
         initX11()
 end
@@ -172,6 +215,10 @@ project "BulletExampleBrowserLib"
                 "../../src",
                 "../ThirdPartyLibs",
                 }
+                
+        if os.is("Linux") then
+            buildoptions{"-fPIC"}
+        end
 
 	if _OPTIONS["lua"] then
 		includedirs{"../ThirdPartyLibs/lua-5.2.3/src"}
@@ -180,6 +227,8 @@ project "BulletExampleBrowserLib"
 		files {"../LuaDemo/LuaPhysicsSetup.cpp"}
 	end
 
+	
+	
 			
 		initOpenGL()
 		initGlew()
@@ -193,6 +242,7 @@ project "BulletExampleBrowserLib"
 		"OpenGLGuiHelper.cpp",
 		"OpenGLExampleBrowser.cpp",
 		"../Utils/b3Clock.cpp",
+		"../Utils/b3Clock.h",
 		"../Utils/ChromeTraceUtil.cpp",
 		"../Utils/ChromeTraceUtil.h",
 		"*.h",
